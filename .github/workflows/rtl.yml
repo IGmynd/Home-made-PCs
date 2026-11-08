@@ -26,7 +26,7 @@ jobs:
           grep -q "SELFTEST PASS" out/soc.txt
       - name: Shell on our core
         run: |
-          CF="-march=rv32i_zicsr -mabi=ilp32 -O2 -ffreestanding -nostdlib -nostartfiles -fno-tree-loop-distribute-patterns"
+          CF="-march=rv32im_zicsr -mabi=ilp32 -O2 -ffreestanding -nostdlib -nostartfiles -fno-tree-loop-distribute-patterns"
           riscv64-unknown-elf-gcc $CF -DTICK=2000u -T sim/link.ld kernel/entry.S kernel/kernel.c -o out/ksim.elf
           riscv64-unknown-elf-objcopy -O binary out/ksim.elf out/ksim.bin
           python3 tools/bin2hex.py out/ksim.bin out/ksim.hex
