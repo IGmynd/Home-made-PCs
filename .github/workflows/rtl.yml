@@ -24,3 +24,15 @@ jobs:
           iverilog -g2012 -Wall -o out/soc.vvp rtl/cpu.v rtl/soc.v rtl/uart.v rtl/clint.v sim/tb_soc.v
           vvp out/soc.vvp | tee out/soc.txt
           grep -q "SELFTEST PASS" out/soc.txt
+      - name: Shell on our core
+        run: |
+          CF="-march=rv32i_zicsr -mabi=ilp32 -O2 -ffreestanding -nostdlib -nostartfiles -fno-tree-loop-distribute-patterns"
+          riscv64-unknown-elf-gcc $CF -DTICK=2000u -T sim/link.ld kernel/entry.S kernel/kernel.c -o out/ksim.elf
+          riscv64-unknown-elf-objcopy -O binary out/ksim.elf out/ksim.bin
+          python3 tools/bin2hex.py out/ksim.bin out/ksim.hex
+          iverilog -g2012 -Wall -o out/shell.vvp rtl/cpu.v rtl/soc.v rtl/uart.v rtl/clint.v sim/tb_shell.v
+          vvp out/shell.vvp | tee out/shell.txt
+          grep -q "PT shell" out/shell.txt
+          grep -q "PT kernel 0.1" out/shell.txt
+          grep -q "uptime: " out/shell.txt
+          grep -q "80000000: " out/shell.txt
