@@ -1,4 +1,4 @@
-// Ядро ПТ v0: RV32I + Zicsr, режим M, многотактовое.
+// Ядро ПТ v0.2: RV32IM + Zicsr, режим M, многотактовое.
 // Шина: mem_valid держится, пока mem_ready не станет 1 (ответ приходит со 2-го такта).
 // mem_addr байтовый (не выровнен), mem_wstrb != 0 означает запись.
 module cpu #(parameter RESET_ADDR = 32'h8000_0000) (
@@ -14,15 +14,21 @@ module cpu #(parameter RESET_ADDR = 32'h8000_0000) (
     input  wire        irq_sw,
     input  wire        irq_ext
 );
-    localparam S_START = 2'd0, S_FETCH = 2'd1, S_EXEC = 2'd2, S_MEM = 2'd3;
+    localparam S_START = 3'd0, S_FETCH = 3'd1, S_EXEC = 3'd2, S_MEM = 3'd3, S_MD = 3'd4;
 
-    reg [1:0]  state;
+    reg [2:0]  state;
     reg [31:0] pc, ir, eff;
     reg [31:0] regs [0:31];
 
     reg        mstatus_mie, mstatus_mpie;
     reg [31:0] mie_r, mtvec, mscratch, mepc, mcause, mtval;
     reg [63:0] mcycle;
+
+    // умножитель/делитель
+    reg [63:0] md_acc, md_m;
+    reg [31:0] md_q, md_rem, md_b, md_a;
+    reg [5:0]  md_cnt;
+    reg        md_div, md_neg;
 
     integer i;
     initial for (i = 0; i < 32; i = i + 1) regs[i] = 32'd0;
@@ -69,6 +75,35 @@ module cpu #(parameter RESET_ADDR = 32'h8000_0000) (
                    : (f3 == 3'd1) ? f7_0
                    : (f3 == 3'd5) ? (f7_0 || f7_20)
                    : 1'b1;
+
+    // ---------- расширение M: подготовка операндов ----------
+    wire is_m = is_op && (ir[31:25] == 7'b0000001);
+    // умножение: берём модули, знак применяем в конце
+    wire mul_na = (f3 == 3'd1 || f3 == 3'd2) && rs1v[31];   // MULH, MULHSU: rs1 знаковый
+    wire mul_nb = (f3 == 3'd1) && rs2v[31];                 // MULH: rs2 знаковый
+    wire [31:0] mul_ua = mul_na ? (32'd0 - rs1v) : rs1v;
+    wire [31:0] mul_ub = mul_nb ? (32'd0 - rs2v) : rs2v;
+    // деление: f3 = 4 DIV, 5 DIVU, 6 REM, 7 REMU; знаковые при f3[0] == 0
+    wire div_signed = ~f3[0];
+    wire div_na = div_signed && rs1v[31];
+    wire div_nb = div_signed && rs2v[31];
+    wire [31:0] div_ua = div_na ? (32'd0 - rs1v) : rs1v;
+    wire [31:0] div_ub = div_nb ? (32'd0 - rs2v) : rs2v;
+
+    // ---------- расширение M: шаги и результат ----------
+    wire [32:0] div_shift  = {md_rem, md_q[31]};
+    wire        div_sub_ok = (div_shift >= {1'b0, md_b});
+    wire [32:0] div_diff   = div_shift - {1'b0, md_b};
+    wire [63:0] mul_p = md_neg ? (64'd0 - md_acc) : md_acc;
+    wire [31:0] quo   = md_neg ? (32'd0 - md_q)   : md_q;
+    wire [31:0] remd  = md_neg ? (32'd0 - md_rem) : md_rem;
+    reg  [31:0] md_result;
+    always @* begin
+        if (!md_div)              md_result = (f3 == 3'd0) ? mul_p[31:0] : mul_p[63:32];
+        else if (md_b == 32'd0)   md_result = f3[1] ? md_a : 32'hFFFF_FFFF;   // деление на 0
+        else if (f3[1])           md_result = remd;
+        else                      md_result = quo;
+    end
 
     // ---------- переходы ----------
     reg br_take;
@@ -118,7 +153,7 @@ module cpu #(parameter RESET_ADDR = 32'h8000_0000) (
         csr_ok = 1'b1;
         case (ir[31:20])
             12'h300: csr_old = {19'b0, 2'b11, 3'b0, mstatus_mpie, 3'b0, mstatus_mie, 3'b0};
-            12'h301: csr_old = 32'h4000_0100;       // misa: RV32 I
+            12'h301: csr_old = 32'h4000_1100;       // misa: RV32 I M
             12'h304: csr_old = mie_r;
             12'h305: csr_old = mtvec;
             12'h340: csr_old = mscratch;
@@ -171,6 +206,8 @@ module cpu #(parameter RESET_ADDR = 32'h8000_0000) (
             mstatus_mie <= 1'b0; mstatus_mpie <= 1'b0;
             mie_r <= 32'd0; mtvec <= 32'd0; mscratch <= 32'd0;
             mepc <= 32'd0; mcause <= 32'd0; mtval <= 32'd0; mcycle <= 64'd0;
+            md_acc <= 64'd0; md_m <= 64'd0; md_q <= 32'd0; md_rem <= 32'd0;
+            md_b <= 32'd0; md_a <= 32'd0; md_cnt <= 6'd0; md_div <= 1'b0; md_neg <= 1'b0;
         end else begin
             mcycle <= mcycle + 64'd1;
             case (state)
@@ -226,9 +263,21 @@ module cpu #(parameter RESET_ADDR = 32'h8000_0000) (
                         mem_valid <= 1'b1; state <= S_MEM;
                     end
                 end
-                7'b0010011, 7'b0110011: begin                                  // АЛУ
-                    if (alu_legal) begin wr(rd, alu_out); pc <= pc + 32'd4; end
-                    else trap(32'd2, pc, ir);
+                7'b0010011, 7'b0110011: begin                                  // АЛУ и M
+                    if (is_m) begin
+                        md_a <= rs1v; md_cnt <= 6'd32; md_div <= f3[2];
+                        md_acc <= 64'd0; md_rem <= 32'd0;
+                        if (!f3[2]) begin                                      // умножение
+                            md_neg <= mul_na ^ mul_nb;
+                            md_m <= {32'd0, mul_ua}; md_q <= mul_ub; md_b <= 32'd0;
+                        end else begin                                         // деление
+                            md_neg <= f3[1] ? div_na : (div_na ^ div_nb);
+                            md_q <= div_ua; md_b <= div_ub; md_m <= 64'd0;
+                        end
+                        state <= S_MD;
+                    end else if (alu_legal) begin
+                        wr(rd, alu_out); pc <= pc + 32'd4;
+                    end else trap(32'd2, pc, ir);
                 end
                 7'b0001111: pc <= pc + 32'd4;                                  // FENCE = nop
                 7'b1110011: begin                                              // SYSTEM
@@ -271,6 +320,26 @@ module cpu #(parameter RESET_ADDR = 32'h8000_0000) (
                     mem_valid <= 1'b0; mem_wstrb <= 4'd0;
                     state <= S_START; pc <= pc + 32'd4;
                     if (opcode == 7'b0000011) wr(rd, load_val);
+                end
+            end
+
+            S_MD: begin
+                if (md_cnt != 6'd0) begin
+                    md_cnt <= md_cnt - 6'd1;
+                    if (!md_div) begin
+                        if (md_q[0]) md_acc <= md_acc + md_m;
+                        md_m <= md_m << 1;
+                        md_q <= md_q >> 1;
+                    end else begin
+                        if (div_sub_ok) begin
+                            md_rem <= div_diff[31:0]; md_q <= {md_q[30:0], 1'b1};
+                        end else begin
+                            md_rem <= div_shift[31:0]; md_q <= {md_q[30:0], 1'b0};
+                        end
+                    end
+                end else begin
+                    wr(rd, md_result);
+                    pc <= pc + 32'd4; state <= S_START;
                 end
             end
             endcase
