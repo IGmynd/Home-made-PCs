@@ -106,6 +106,28 @@ void main(void) {
     csr_clear(mstatus, 0x8);
     check("timer n", irqs, 1);
     check("timer c", last_cause, 0x80000007);
+    /* ----- расширение M: каждая команда отдельно, через asm ----- */
+#define OP2(name, a, b) ({ uint32_t r_; asm volatile(name " %0, %1, %2" : "=r"(r_) : "r"(a), "r"(b)); r_; })
+    volatile uint32_t m7 = 0xFFFFFFF9u, m3 = 3u, mneg1 = 0xFFFFFFFFu;
+    volatile uint32_t mmin = 0x80000000u, mz = 0u, m5 = 5u, m7p = 7u, mneg2 = 0xFFFFFFFEu;
+    check("mul",    OP2("mul",    m7, m3), 0xFFFFFFEB);
+    check("mulh",   OP2("mulh",   m7, m3), 0xFFFFFFFF);
+    check("mulhu",  OP2("mulhu",  m7, m3), 2);
+    check("mulhsu", OP2("mulhsu", m7, m3), 0xFFFFFFFF);
+    check("mulh2",  OP2("mulh",   mmin, mmin), 0x40000000);
+    check("mul2",   OP2("mul",    mmin, mmin), 0);
+    check("div",    OP2("div",    m7, m3), 0xFFFFFFFE);
+    check("rem",    OP2("rem",    m7, m3), 0xFFFFFFFF);
+    check("divu",   OP2("divu",   m7, m3), 0x55555553);
+    check("remu",   OP2("remu",   m7, m3), 0);
+    check("div/0",  OP2("div",    m5, mz), 0xFFFFFFFF);
+    check("rem/0",  OP2("rem",    m5, mz), 5);
+    check("divu/0", OP2("divu",   m7p, mz), 0xFFFFFFFF);
+    check("remu/0", OP2("remu",   m7p, mz), 7);
+    check("divovf", OP2("div",    mmin, mneg1), 0x80000000);
+    check("removf", OP2("rem",    mmin, mneg1), 0);
+    check("div7/-2", OP2("div",   m7p, mneg2), 0xFFFFFFFD);
+    check("rem7/-2", OP2("rem",   m7p, mneg2), 1);
 
     if (fails == 0) puts_("SELFTEST PASS\n");
     else { puts_("SELFTEST FAIL\n"); }
