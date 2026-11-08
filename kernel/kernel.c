@@ -19,7 +19,7 @@ extern void trap_entry(void);
 static volatile uint32_t ticks;
 
 /* ---------- вывод и ввод ---------- */
-static void putc_(char c) { UART_THR = c; }
+static void putc_(char c) { while (!(UART_LSR & 0x20)) {} UART_THR = c; }
 static void puts_(const char *s) { while (*s) putc_(*s++); }
 
 static void puthex(uint32_t v) {
