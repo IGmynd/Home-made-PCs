@@ -23,8 +23,10 @@ jobs:
           riscv64-unknown-elf-gcc $CF -T boot/link.ld boot/start.S boot/boot.c -o out/boot.elf
       - name: Boot from floppy in QEMU
         run: |
-          timeout 20 qemu-system-riscv32 -machine virt -nographic -bios none -kernel out/boot.elf -device loader,file=out/floppy.img,addr=0x80200000 | tee out/log.txt
+          (sleep 1; printf 'help\nver\necho hi there\nuptime\npeek 80100000\nexit\n'; sleep 5) | timeout 30 qemu-system-riscv32 -machine virt -nographic -bios none -kernel out/boot.elf -device loader,file=out/floppy.img,addr=0x80200000 | tee out/log.txt
           grep -q "image crc ok" out/log.txt
           grep -q "kernel: alive" out/log.txt
           grep -q "ecall caught" out/log.txt
-          grep -q "tick 5" out/log.txt
+          grep -q "PT kernel 0.1" out/log.txt
+          grep -q "ticks" out/log.txt
+          grep -q "80100000: " out/log.txt
