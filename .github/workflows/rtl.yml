@@ -1,0 +1,15 @@
+name: rtl
+on: [push, workflow_dispatch]
+jobs:
+  sim:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Tools
+        run: sudo apt-get update && sudo apt-get install -y iverilog
+      - name: Simulate
+        run: |
+          mkdir -p out
+          iverilog -g2012 -Wall -o out/tb.vvp rtl/uart.v rtl/clint.v sim/tb.v
+          vvp out/tb.vvp | tee out/sim.txt
+          grep -q "TB PASS" out/sim.txt
