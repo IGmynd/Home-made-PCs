@@ -1,0 +1,17 @@
+name: build
+on: [push, workflow_dispatch]
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Tools
+        run: sudo apt-get update && sudo apt-get install -y gcc-riscv64-unknown-elf qemu-system-misc
+      - name: Build
+        run: |
+          mkdir -p out
+          riscv64-unknown-elf-gcc -march=rv32imc_zicsr -mabi=ilp32 -O2 -ffreestanding -nostdlib -nostartfiles -T boot/link.ld boot/start.S boot/hello.c -o out/hello.elf
+      - name: Run in QEMU
+        run: |
+          timeout 20 qemu-system-riscv32 -machine virt -nographic -bios none -kernel out/hello.elf | tee out/log.txt
+          grep -q "hello from RV32IMC" out/log.txt
