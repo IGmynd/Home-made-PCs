@@ -11,7 +11,7 @@ jobs:
         run: |
           mkdir -p out
           CF="-march=rv32imc_zicsr -mabi=ilp32 -O2 -ffreestanding -nostdlib -nostartfiles -fno-tree-loop-distribute-patterns"
-          riscv64-unknown-elf-gcc $CF -T kernel/link.ld boot/start.S kernel/kernel.c -o out/kernel.elf
+          riscv64-unknown-elf-gcc $CF -T kernel/link.ld kernel/entry.S kernel/kernel.c -o out/kernel.elf
           riscv64-unknown-elf-objcopy -O binary out/kernel.elf out/kernel.bin
       - name: Floppy image
         run: |
@@ -26,3 +26,5 @@ jobs:
           timeout 20 qemu-system-riscv32 -machine virt -nographic -bios none -kernel out/boot.elf -device loader,file=out/floppy.img,addr=0x80200000 | tee out/log.txt
           grep -q "image crc ok" out/log.txt
           grep -q "kernel: alive" out/log.txt
+          grep -q "ecall caught" out/log.txt
+          grep -q "tick 5" out/log.txt
