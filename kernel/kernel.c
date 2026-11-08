@@ -3,13 +3,16 @@
 #define UART_BASE 0x10000000u
 #define UART_THR (*(volatile uint8_t *)(UART_BASE + 0)) /* запись: передать байт */
 #define UART_RBR (*(volatile uint8_t *)(UART_BASE + 0)) /* чтение: принятый байт */
-#define UART_LSR (*(volatile uint8_t *)(UART_BASE + 5)) /* бит 0: есть принятый байт */
+#define UART_LSR (*(volatile uint8_t *)(UART_BASE + 5)) /* бит 0: есть байт, бит 5: можно слать */
 #define EXIT (*(volatile uint32_t *)0x100000)
 #define MTIME_LO (*(volatile uint32_t *)0x0200BFF8)
 #define MTIME_HI (*(volatile uint32_t *)0x0200BFFC)
 #define CMP_LO (*(volatile uint32_t *)0x02004000)
 #define CMP_HI (*(volatile uint32_t *)0x02004004)
+
+#ifndef TICK
 #define TICK 1000000u /* 10 МГц * 0.1 с */
+#endif
 
 #define csr_read(r) ({ uint32_t v; asm volatile("csrr %0, " #r : "=r"(v)); v; })
 #define csr_write(r, v) asm volatile("csrw " #r ", %0" ::"r"(v))
@@ -26,15 +29,20 @@ static void puthex(uint32_t v) {
     for (int i = 28; i >= 0; i -= 4) putc_("0123456789abcdef"[(v >> i) & 15]);
 }
 
+/* Печать десятичного числа без деления (ядро пока без расширения M) */
 static void putdec(uint32_t v) {
-    char b[10];
-    int n = 0;
-    do { b[n++] = '0' + v % 10; v /= 10; } while (v);
-    while (n) putc_(b[--n]);
+    static const uint32_t p[10] = {1000000000u, 100000000u, 10000000u, 1000000u, 100000u,
+                                   10000u, 1000u, 100u, 10u, 1u};
+    int started = 0;
+    for (int i = 0; i < 10; i++) {
+        char d = '0';
+        while (v >= p[i]) { v -= p[i]; d++; }
+        if (d != '0' || started || i == 9) { putc_(d); started = 1; }
+    }
 }
 
 static char getc_(void) {
-    while (!(UART_LSR & 1)) asm volatile("wfi"); /* спим до прерывания таймера */
+    while (!(UART_LSR & 1)) asm volatile("wfi");
     return UART_RBR;
 }
 
@@ -114,7 +122,7 @@ static void run(const char *l) {
         puts_("help  - list commands\nver   - show version\necho  - print text\n");
         puts_("uptime - time since start\npeek  - read memory word (hex addr)\nexit  - stop emulator\n");
     } else if (streq(l, "ver")) {
-        puts_("PT kernel 0.1 (RV32IMC)\n");
+        puts_("PT kernel 0.1 (RV32)\n");
     } else if (starts(l, "echo ")) {
         puts_(l + 5);
         puts_("\n");
