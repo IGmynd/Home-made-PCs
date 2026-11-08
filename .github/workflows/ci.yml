@@ -7,16 +7,22 @@ jobs:
       - uses: actions/checkout@v4
       - name: Tools
         run: sudo apt-get update && sudo apt-get install -y gcc-riscv64-unknown-elf qemu-system-misc
-      - name: Build
+      - name: Build kernel
         run: |
           mkdir -p out
-          riscv64-unknown-elf-gcc -march=rv32imc_zicsr -mabi=ilp32 -O2 -ffreestanding -nostdlib -nostartfiles -T boot/link.ld boot/start.S boot/hello.c -o out/hello.elf
-      - name: Run in QEMU
-        run: |
-          timeout 20 qemu-system-riscv32 -machine virt -nographic -bios none -kernel out/hello.elf | tee out/log.txt
-          grep -q "hello from RV32IMC" out/log.txt
+          CF="-march=rv32imc_zicsr -mabi=ilp32 -O2 -ffreestanding -nostdlib -nostartfiles -fno-tree-loop-distribute-patterns"
+          riscv64-unknown-elf-gcc $CF -T kernel/link.ld boot/start.S kernel/kernel.c -o out/kernel.elf
+          riscv64-unknown-elf-objcopy -O binary out/kernel.elf out/kernel.bin
       - name: Floppy image
         run: |
-          riscv64-unknown-elf-objcopy -O binary out/hello.elf out/hello.bin
-          python3 tools/mkmedia.py out/floppy.img --kernel out/hello.bin --label PT-SYS --cls 1 --boot
+          python3 tools/mkmedia.py out/floppy.img --kernel out/kernel.bin --label PT-SYS --cls 1 --boot --load 0x80100000 --entry 0x80100000
           python3 tools/mkmedia.py out/floppy.img --check
+      - name: Build boot ROM
+        run: |
+          CF="-march=rv32imc_zicsr -mabi=ilp32 -O2 -ffreestanding -nostdlib -nostartfiles -fno-tree-loop-distribute-patterns"
+          riscv64-unknown-elf-gcc $CF -T boot/link.ld boot/start.S boot/boot.c -o out/boot.elf
+      - name: Boot from floppy in QEMU
+        run: |
+          timeout 20 qemu-system-riscv32 -machine virt -nographic -bios none -kernel out/boot.elf -device loader,file=out/floppy.img,addr=0x80200000 | tee out/log.txt
+          grep -q "image crc ok" out/log.txt
+          grep -q "kernel: alive" out/log.txt
