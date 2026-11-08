@@ -15,3 +15,8 @@ jobs:
         run: |
           timeout 20 qemu-system-riscv32 -machine virt -nographic -bios none -kernel out/hello.elf | tee out/log.txt
           grep -q "hello from RV32IMC" out/log.txt
+       - name: Floppy image
+        run: |
+          riscv64-unknown-elf-objcopy -O binary out/hello.elf out/hello.bin
+          python3 tools/mkmedia.py out/floppy.img --kernel out/hello.bin --label PT-SYS --cls 1 --boot
+          python3 tools/mkmedia.py out/floppy.img --check
