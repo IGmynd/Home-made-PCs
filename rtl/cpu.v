@@ -1,4 +1,4 @@
-// Ядро ПТ v0.2: RV32IM + Zicsr, режим M, многотактовое.
+// Ядро ПТ v0.3: RV32IMC + Zicsr, режим M, многотактовое.
 // Шина: mem_valid держится, пока mem_ready не станет 1 (ответ приходит со 2-го такта).
 // mem_addr байтовый (не выровнен), mem_wstrb != 0 означает запись.
 module cpu #(parameter RESET_ADDR = 32'h8000_0000) (
@@ -14,10 +14,13 @@ module cpu #(parameter RESET_ADDR = 32'h8000_0000) (
     input  wire        irq_sw,
     input  wire        irq_ext
 );
-    localparam S_START = 3'd0, S_FETCH = 3'd1, S_EXEC = 3'd2, S_MEM = 3'd3, S_MD = 3'd4;
+    localparam S_START = 3'd0, S_FETCH = 3'd1, S_EXEC = 3'd2, S_MEM = 3'd3,
+               S_MD = 3'd4, S_FETCH2 = 3'd5;
 
     reg [2:0]  state;
     reg [31:0] pc, ir, eff;
+    reg        il4;                  // 1: команда 32-битная, 0: 16-битная
+    reg [15:0] fl;                   // нижняя половина команды на стыке слов
     reg [31:0] regs [0:31];
 
     reg        mstatus_mie, mstatus_mpie;
@@ -32,6 +35,100 @@ module cpu #(parameter RESET_ADDR = 32'h8000_0000) (
 
     integer i;
     initial for (i = 0; i < 32; i = i + 1) regs[i] = 32'd0;
+
+    wire [31:0] pc_inc = pc + (il4 ? 32'd4 : 32'd2);
+
+    // ---------- расширение C: разворот 16-битной команды в 32-битную ----------
+    wire [15:0] fh   = pc[1] ? mem_rdata[31:16] : mem_rdata[15:0];
+    wire        fh_c = (fh[1:0] != 2'b11);
+    wire [4:0]  c_rd   = fh[11:7];
+    wire [4:0]  c_rs2  = fh[6:2];
+    wire [4:0]  c_rdp  = {2'b01, fh[4:2]};
+    wire [4:0]  c_rs1p = {2'b01, fh[9:7]};
+    wire [11:0] c_i6   = {{6{fh[12]}}, fh[12], fh[6:2]};
+    wire [9:0]  c_nz4  = {fh[10:7], fh[12:11], fh[5], fh[6], 2'b00};
+    wire [6:0]  c_uw   = {fh[5], fh[12:10], fh[6], 2'b00};
+    wire [9:0]  c_nz16 = {fh[12], fh[4:3], fh[5], fh[2], fh[6], 4'b0000};
+    wire [7:0]  c_ulw  = {fh[3:2], fh[12], fh[6:4], 2'b00};
+    wire [7:0]  c_usw  = {fh[8:7], fh[12:9], 2'b00};
+    wire [20:0] c_j    = {{9{fh[12]}}, fh[12], fh[8], fh[10:9], fh[6], fh[7], fh[2], fh[11], fh[5:3], 1'b0};
+    wire [12:0] c_b    = {{4{fh[12]}}, fh[12], fh[6:5], fh[2], fh[11:10], fh[4:3], 1'b0};
+
+    reg [31:0] cx;      // развёрнутая команда
+    reg        cill;    // сжатая команда недопустима
+    always @* begin
+        cx = 32'hFFFF_FFFF;
+        cill = 1'b0;
+        case (fh[1:0])
+        2'b00: begin
+            case (fh[15:13])
+                3'b000: begin
+                    cx = {2'b00, c_nz4, 5'd2, 3'b000, c_rdp, 7'b0010011};          // c.addi4spn
+                    cill = (c_nz4 == 10'd0);
+                end
+                3'b010: cx = {5'd0, c_uw, c_rs1p, 3'b010, c_rdp, 7'b0000011};      // c.lw
+                3'b110: cx = {5'd0, c_uw[6:5], c_rdp, c_rs1p, 3'b010, c_uw[4:0], 7'b0100011}; // c.sw
+                default: cill = 1'b1;
+            endcase
+        end
+        2'b01: begin
+            case (fh[15:13])
+                3'b000: cx = {c_i6, c_rd, 3'b000, c_rd, 7'b0010011};               // c.addi / c.nop
+                3'b001: cx = {c_j[20], c_j[10:1], c_j[11], c_j[19:12], 5'd1, 7'b1101111}; // c.jal
+                3'b010: cx = {c_i6, 5'd0, 3'b000, c_rd, 7'b0010011};               // c.li
+                3'b011: begin
+                    if (c_rd == 5'd2) begin                                         // c.addi16sp
+                        cx = {{2{c_nz16[9]}}, c_nz16, 5'd2, 3'b000, 5'd2, 7'b0010011};
+                        cill = (c_nz16 == 10'd0);
+                    end else begin                                                  // c.lui
+                        cx = {{15{fh[12]}}, fh[6:2], c_rd, 7'b0110111};
+                        cill = ({fh[12], fh[6:2]} == 6'd0);
+                    end
+                end
+                3'b100: begin
+                    case (fh[11:10])
+                        2'b00: begin cx = {7'b0000000, fh[6:2], c_rs1p, 3'b101, c_rs1p, 7'b0010011}; cill = fh[12]; end // c.srli
+                        2'b01: begin cx = {7'b0100000, fh[6:2], c_rs1p, 3'b101, c_rs1p, 7'b0010011}; cill = fh[12]; end // c.srai
+                        2'b10: cx = {c_i6, c_rs1p, 3'b111, c_rs1p, 7'b0010011};                                         // c.andi
+                        default: begin
+                            cill = fh[12];
+                            case (fh[6:5])
+                                2'b00:   cx = {7'b0100000, c_rdp, c_rs1p, 3'b000, c_rs1p, 7'b0110011};  // c.sub
+                                2'b01:   cx = {7'b0000000, c_rdp, c_rs1p, 3'b100, c_rs1p, 7'b0110011};  // c.xor
+                                2'b10:   cx = {7'b0000000, c_rdp, c_rs1p, 3'b110, c_rs1p, 7'b0110011};  // c.or
+                                default: cx = {7'b0000000, c_rdp, c_rs1p, 3'b111, c_rs1p, 7'b0110011};  // c.and
+                            endcase
+                        end
+                    endcase
+                end
+                3'b101: cx = {c_j[20], c_j[10:1], c_j[11], c_j[19:12], 5'd0, 7'b1101111}; // c.j
+                3'b110: cx = {c_b[12], c_b[10:5], 5'd0, c_rs1p, 3'b000, c_b[4:1], c_b[11], 7'b1100011}; // c.beqz
+                default: cx = {c_b[12], c_b[10:5], 5'd0, c_rs1p, 3'b001, c_b[4:1], c_b[11], 7'b1100011}; // c.bnez
+            endcase
+        end
+        2'b10: begin
+            case (fh[15:13])
+                3'b000: begin cx = {7'b0000000, c_rs2, c_rd, 3'b001, c_rd, 7'b0010011}; cill = fh[12]; end // c.slli
+                3'b010: begin cx = {4'b0000, c_ulw, 5'd2, 3'b010, c_rd, 7'b0000011}; cill = (c_rd == 5'd0); end // c.lwsp
+                3'b100: begin
+                    if (!fh[12]) begin
+                        if (c_rs2 == 5'd0) begin                                    // c.jr
+                            cx = {12'd0, c_rd, 3'b000, 5'd0, 7'b1100111};
+                            cill = (c_rd == 5'd0);
+                        end else cx = {7'b0000000, c_rs2, 5'd0, 3'b000, c_rd, 7'b0110011}; // c.mv
+                    end else begin
+                        if (c_rd == 5'd0 && c_rs2 == 5'd0) cx = 32'h0010_0073;      // c.ebreak
+                        else if (c_rs2 == 5'd0) cx = {12'd0, c_rd, 3'b000, 5'd1, 7'b1100111}; // c.jalr
+                        else cx = {7'b0000000, c_rs2, c_rd, 3'b000, c_rd, 7'b0110011};        // c.add
+                    end
+                end
+                3'b110: cx = {4'b0000, c_usw[7:5], c_rs2, 5'd2, 3'b010, c_usw[4:0], 7'b0100011}; // c.swsp
+                default: cill = 1'b1;
+            endcase
+        end
+        default: ;
+        endcase
+    end
 
     // ---------- разбор инструкции ----------
     wire [6:0]  opcode = ir[6:0];
@@ -78,12 +175,10 @@ module cpu #(parameter RESET_ADDR = 32'h8000_0000) (
 
     // ---------- расширение M: подготовка операндов ----------
     wire is_m = is_op && (ir[31:25] == 7'b0000001);
-    // умножение: берём модули, знак применяем в конце
-    wire mul_na = (f3 == 3'd1 || f3 == 3'd2) && rs1v[31];   // MULH, MULHSU: rs1 знаковый
-    wire mul_nb = (f3 == 3'd1) && rs2v[31];                 // MULH: rs2 знаковый
+    wire mul_na = (f3 == 3'd1 || f3 == 3'd2) && rs1v[31];
+    wire mul_nb = (f3 == 3'd1) && rs2v[31];
     wire [31:0] mul_ua = mul_na ? (32'd0 - rs1v) : rs1v;
     wire [31:0] mul_ub = mul_nb ? (32'd0 - rs2v) : rs2v;
-    // деление: f3 = 4 DIV, 5 DIVU, 6 REM, 7 REMU; знаковые при f3[0] == 0
     wire div_signed = ~f3[0];
     wire div_na = div_signed && rs1v[31];
     wire div_nb = div_signed && rs2v[31];
@@ -100,7 +195,7 @@ module cpu #(parameter RESET_ADDR = 32'h8000_0000) (
     reg  [31:0] md_result;
     always @* begin
         if (!md_div)              md_result = (f3 == 3'd0) ? mul_p[31:0] : mul_p[63:32];
-        else if (md_b == 32'd0)   md_result = f3[1] ? md_a : 32'hFFFF_FFFF;   // деление на 0
+        else if (md_b == 32'd0)   md_result = f3[1] ? md_a : 32'hFFFF_FFFF;
         else if (f3[1])           md_result = remd;
         else                      md_result = quo;
     end
@@ -153,7 +248,7 @@ module cpu #(parameter RESET_ADDR = 32'h8000_0000) (
         csr_ok = 1'b1;
         case (ir[31:20])
             12'h300: csr_old = {19'b0, 2'b11, 3'b0, mstatus_mpie, 3'b0, mstatus_mie, 3'b0};
-            12'h301: csr_old = 32'h4000_1100;       // misa: RV32 I M
+            12'h301: csr_old = 32'h4000_1104;       // misa: RV32 I M C
             12'h304: csr_old = mie_r;
             12'h305: csr_old = mtvec;
             12'h340: csr_old = mscratch;
@@ -202,6 +297,7 @@ module cpu #(parameter RESET_ADDR = 32'h8000_0000) (
     always @(posedge clk) begin
         if (rst) begin
             state <= S_START; pc <= RESET_ADDR; ir <= 32'd0; eff <= 32'd0;
+            il4 <= 1'b1; fl <= 16'd0;
             mem_valid <= 1'b0; mem_addr <= 32'd0; mem_wdata <= 32'd0; mem_wstrb <= 4'd0;
             mstatus_mie <= 1'b0; mstatus_mpie <= 1'b0;
             mie_r <= 32'd0; mtvec <= 32'd0; mscratch <= 32'd0;
@@ -215,36 +311,45 @@ module cpu #(parameter RESET_ADDR = 32'h8000_0000) (
                 if (take_irq) begin
                     trap(32'h8000_0000 | irq_cause, pc, 32'd0);
                 end else begin
-                    mem_valid <= 1'b1; mem_addr <= pc; mem_wstrb <= 4'd0;
+                    mem_valid <= 1'b1; mem_addr <= {pc[31:2], 2'b00}; mem_wstrb <= 4'd0;
                     state <= S_FETCH;
                 end
             end
 
             S_FETCH: begin
                 if (mem_ready) begin
-                    ir <= mem_rdata; mem_valid <= 1'b0; state <= S_EXEC;
+                    if (fh_c) begin                                 // 16-битная команда
+                        ir <= cill ? 32'hFFFF_FFFF : cx; il4 <= 1'b0;
+                        mem_valid <= 1'b0; state <= S_EXEC;
+                    end else if (!pc[1]) begin                      // 32-битная, выровнена
+                        ir <= mem_rdata; il4 <= 1'b1;
+                        mem_valid <= 1'b0; state <= S_EXEC;
+                    end else begin                                  // 32-битная на стыке слов
+                        fl <= fh;
+                        mem_addr <= {pc[31:2], 2'b00} + 32'd4;
+                        state <= S_FETCH2;                          // mem_valid остаётся 1
+                    end
+                end
+            end
+
+            S_FETCH2: begin
+                if (mem_ready) begin
+                    ir <= {mem_rdata[15:0], fl}; il4 <= 1'b1;
+                    mem_valid <= 1'b0; state <= S_EXEC;
                 end
             end
 
             S_EXEC: begin
                 state <= S_START;
                 case (opcode)
-                7'b0110111: begin wr(rd, immU); pc <= pc + 32'd4; end          // LUI
-                7'b0010111: begin wr(rd, pc + immU); pc <= pc + 32'd4; end     // AUIPC
-                7'b1101111: begin                                              // JAL
-                    if (jal_target[1]) trap(32'd0, pc, jal_target);
-                    else begin wr(rd, pc + 32'd4); pc <= jal_target; end
-                end
-                7'b1100111: begin                                              // JALR
-                    if (jalr_target[1]) trap(32'd0, pc, jalr_target);
-                    else begin wr(rd, pc + 32'd4); pc <= jalr_target; end
-                end
+                7'b0110111: begin wr(rd, immU); pc <= pc_inc; end              // LUI
+                7'b0010111: begin wr(rd, pc + immU); pc <= pc_inc; end         // AUIPC
+                7'b1101111: begin wr(rd, pc_inc); pc <= jal_target; end        // JAL
+                7'b1100111: begin wr(rd, pc_inc); pc <= jalr_target; end       // JALR
                 7'b1100011: begin                                              // ветвления
                     if (!br_legal) trap(32'd2, pc, ir);
-                    else if (br_take) begin
-                        if (br_target[1]) trap(32'd0, pc, br_target);
-                        else pc <= br_target;
-                    end else pc <= pc + 32'd4;
+                    else if (br_take) pc <= br_target;
+                    else pc <= pc_inc;
                 end
                 7'b0000011: begin                                              // LOAD
                     if (!ld_legal) trap(32'd2, pc, ir);
@@ -267,19 +372,19 @@ module cpu #(parameter RESET_ADDR = 32'h8000_0000) (
                     if (is_m) begin
                         md_a <= rs1v; md_cnt <= 6'd32; md_div <= f3[2];
                         md_acc <= 64'd0; md_rem <= 32'd0;
-                        if (!f3[2]) begin                                      // умножение
+                        if (!f3[2]) begin
                             md_neg <= mul_na ^ mul_nb;
                             md_m <= {32'd0, mul_ua}; md_q <= mul_ub; md_b <= 32'd0;
-                        end else begin                                         // деление
+                        end else begin
                             md_neg <= f3[1] ? div_na : (div_na ^ div_nb);
                             md_q <= div_ua; md_b <= div_ub; md_m <= 64'd0;
                         end
                         state <= S_MD;
                     end else if (alu_legal) begin
-                        wr(rd, alu_out); pc <= pc + 32'd4;
+                        wr(rd, alu_out); pc <= pc_inc;
                     end else trap(32'd2, pc, ir);
                 end
-                7'b0001111: pc <= pc + 32'd4;                                  // FENCE = nop
+                7'b0001111: pc <= pc_inc;                                      // FENCE = nop
                 7'b1110011: begin                                              // SYSTEM
                     if (f3 == 3'd0) begin
                         case (ir[31:20])
@@ -289,7 +394,7 @@ module cpu #(parameter RESET_ADDR = 32'h8000_0000) (
                                 pc <= mepc;
                                 mstatus_mie <= mstatus_mpie; mstatus_mpie <= 1'b1;
                             end
-                            12'h105: pc <= pc + 32'd4;                         // wfi = nop
+                            12'h105: pc <= pc_inc;                             // wfi = nop
                             default: trap(32'd2, pc, ir);
                         endcase
                     end else if (f3 == 3'd4 || !csr_ok) begin
@@ -302,13 +407,13 @@ module cpu #(parameter RESET_ADDR = 32'h8000_0000) (
                                 12'h304: mie_r <= csr_new & 32'h0000_0888;
                                 12'h305: mtvec <= {csr_new[31:2], 2'b00};
                                 12'h340: mscratch <= csr_new;
-                                12'h341: mepc <= {csr_new[31:2], 2'b00};
+                                12'h341: mepc <= {csr_new[31:1], 1'b0};
                                 12'h342: mcause <= csr_new;
                                 12'h343: mtval <= csr_new;
                                 default: ;
                             endcase
                         end
-                        pc <= pc + 32'd4;
+                        pc <= pc_inc;
                     end
                 end
                 default: trap(32'd2, pc, ir);                                  // неизвестная команда
@@ -318,7 +423,7 @@ module cpu #(parameter RESET_ADDR = 32'h8000_0000) (
             S_MEM: begin
                 if (mem_ready) begin
                     mem_valid <= 1'b0; mem_wstrb <= 4'd0;
-                    state <= S_START; pc <= pc + 32'd4;
+                    state <= S_START; pc <= pc_inc;
                     if (opcode == 7'b0000011) wr(rd, load_val);
                 end
             end
@@ -339,7 +444,7 @@ module cpu #(parameter RESET_ADDR = 32'h8000_0000) (
                     end
                 end else begin
                     wr(rd, md_result);
-                    pc <= pc + 32'd4; state <= S_START;
+                    pc <= pc_inc; state <= S_START;
                 end
             end
             endcase
