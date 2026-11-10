@@ -190,7 +190,7 @@ void main(void) {
             "c.addi a0, 5\n"
             "2:\n"
             "c.j 3f\n"
-            "c.addi a0, 100\n"
+            "c.addi a0, 20\n"
             "3:\n"
             "mv %0, a0\n"
             : "=r"(t0) :: "a0");
