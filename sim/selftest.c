@@ -129,6 +129,110 @@ void main(void) {
     check("div7/-2", OP2("div",   m7p, mneg2), 0xFFFFFFFD);
     check("rem7/-2", OP2("rem",   m7p, mneg2), 1);
 
+    /* ----- расширение C: конкретные сжатые команды ----- */
+    {
+        uint32_t t0, t1, t2, t3;
+        static volatile uint32_t cbuf[4] __attribute__((aligned(4)));
+
+        asm volatile(
+            "li a0, 0x0F0F\n"
+            "li a1, 0x00FF\n"
+            "c.mv a2, a0\n c.sub a2, a1\n"
+            "c.mv a3, a0\n c.xor a3, a1\n"
+            "c.mv a4, a0\n c.or a4, a1\n"
+            "c.mv a5, a0\n c.and a5, a1\n"
+            "mv %0, a2\n mv %1, a3\n mv %2, a4\n mv %3, a5\n"
+            : "=r"(t0), "=r"(t1), "=r"(t2), "=r"(t3) :: "a0", "a1", "a2", "a3", "a4", "a5");
+        check("c.sub", t0, 0x0E10);
+        check("c.xor", t1, 0x0FF0);
+        check("c.or",  t2, 0x0FFF);
+        check("c.and", t3, 0x000F);
+
+        asm volatile(
+            "li a0, -64\n c.srai a0, 2\n"
+            "li a1, -64\n c.srli a1, 28\n"
+            "li a2, 0x1234\n c.andi a2, 0x1f\n"
+            "li a3, 3\n c.slli a3, 4\n"
+            "mv %0, a0\n mv %1, a1\n mv %2, a2\n mv %3, a3\n"
+            : "=r"(t0), "=r"(t1), "=r"(t2), "=r"(t3) :: "a0", "a1", "a2", "a3");
+        check("c.srai", t0, 0xFFFFFFF0);
+        check("c.srli", t1, 0x0000000F);
+        check("c.andi", t2, 0x00000014);
+        check("c.slli", t3, 0x00000030);
+
+        asm volatile(
+            "mv a5, sp\n"
+            "c.addi4spn a4, sp, 16\n"
+            "sub a4, a4, a5\n"
+            "mv a3, sp\n"
+            "c.addi16sp sp, -32\n"
+            "mv a2, sp\n"
+            "c.addi16sp sp, 32\n"
+            "sub a2, a3, a2\n"
+            "mv %0, a4\n mv %1, a2\n"
+            : "=r"(t0), "=r"(t1) :: "a2", "a3", "a4", "a5");
+        check("c.addi4spn", t0, 16);
+        check("c.addi16sp", t1, 32);
+
+        asm volatile(
+            "c.lui a0, 5\n c.li a1, -3\n c.nop\n"
+            "mv %0, a0\n mv %1, a1\n"
+            : "=r"(t0), "=r"(t1) :: "a0", "a1");
+        check("c.lui", t0, 0x5000);
+        check("c.li",  t1, 0xFFFFFFFD);
+
+        asm volatile(
+            "li a0, 0\n"
+            "c.beqz a0, 1f\n"
+            "li a0, 99\n"
+            "1:\n"
+            "c.bnez a0, 2f\n"
+            "c.addi a0, 5\n"
+            "2:\n"
+            "c.j 3f\n"
+            "c.addi a0, 100\n"
+            "3:\n"
+            "mv %0, a0\n"
+            : "=r"(t0) :: "a0");
+        check("c.branch", t0, 5);
+
+        asm volatile(
+            "li a0, 0\n"
+            "c.jal 1f\n"
+            "c.j 2f\n"
+            "1:\n"
+            "c.addi a0, 7\n"
+            "c.jr ra\n"
+            "2:\n"
+            "mv %0, a0\n"
+            : "=r"(t0) :: "a0", "ra");
+        check("c.jal/jr", t0, 7);
+
+        asm volatile(
+            "mv a1, %2\n"
+            "li a0, 0x12345678\n"
+            "c.sw a0, 4(a1)\n"
+            "c.lw a2, 4(a1)\n"
+            "mv %0, a2\n"
+            "addi sp, sp, -16\n"
+            "li a0, 0x5A5A1234\n"
+            "c.swsp a0, 8(sp)\n"
+            "c.lwsp a3, 8(sp)\n"
+            "addi sp, sp, 16\n"
+            "mv %1, a3\n"
+            : "=r"(t0), "=r"(t1) : "r"(cbuf) : "a0", "a1", "a2", "a3", "memory");
+        check("c.lw/sw", t0, 0x12345678);
+        check("c.lwsp/swsp", t1, 0x5A5A1234);
+
+        /* 32-битная команда на стыке слов: c.nop (2 байта) + addi a0, zero, 123 */
+        asm volatile(
+            ".balign 4\n"
+            "c.nop\n"
+            ".2byte 0x0513, 0x07B0\n"
+            "mv %0, a0\n"
+            : "=r"(t0) :: "a0");
+        check("odd fetch", t0, 123);
+    }
     if (fails == 0) puts_("SELFTEST PASS\n");
     else { puts_("SELFTEST FAIL\n"); }
     EXIT = 0x5555;
