@@ -1,0 +1,55 @@
+; Печатает первые 10 чисел Фибоначчи.
+.data
+a:    .word 0
+b:    .word 1
+cnt:  .word 10
+
+.code
+loop:
+        push cnt
+        ld32
+        jz done
+        push a
+        ld32
+        call print_num
+        push ' '
+        sys 1
+        push a              ; t = a + b
+        ld32
+        push b
+        ld32
+        add                 ; ( t )
+        push b
+        ld32
+        push a
+        st32                ; a = b
+        push b
+        st32                ; b = t
+        push cnt
+        ld32
+        push 1
+        sub
+        push cnt
+        st32                ; cnt = cnt - 1
+        jmp loop
+done:
+        push 10
+        sys 1
+        halt
+
+print_num:                  ; ( n -- ) печатает неотрицательное число
+        dup
+        push 10
+        lt
+        jnz small
+        dup
+        push 10
+        div
+        call print_num
+        push 10
+        mod
+small:
+        push '0'
+        add
+        sys 1
+        ret
