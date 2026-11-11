@@ -5,7 +5,7 @@ module tb_shell;
     always #5 clk = ~clk;
     wire tx;
 
-    soc #(.RAM_AW(13), .INIT_FILE("out/ksim.hex"), .UART_DIV(BIT), .TICK_DIV(2))
+    soc #(.RAM_AW(15), .INIT_FILE("out/ksim.hex"), .UART_DIV(BIT), .TICK_DIV(2))
         dut (.clk(clk), .rst(rst), .uart_rx(uart_rx), .uart_tx(tx));
 
     initial begin
@@ -62,8 +62,14 @@ module tb_shell;
         send_line("echo hi there");
         send_line("uptime");
         send_line("peek 80000000");
-        send_line("run hello");
-        repeat (500000) @(posedge clk);
+        send_line("ls");
+        repeat (800000) @(posedge clk);  // первое обращение к диску: подключение и CRC
+        send_line("cat readme.txt");
+        repeat (400000) @(posedge clk);
+        send_line("run hello.ptb");
+        repeat (600000) @(posedge clk);
+        send_line("run fib.ptb");
+        repeat (600000) @(posedge clk);
         send_line("exit");
     end
 
