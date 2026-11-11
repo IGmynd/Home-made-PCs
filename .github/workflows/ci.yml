@@ -7,12 +7,17 @@ jobs:
       - uses: actions/checkout@v4
       - name: Tools
         run: sudo apt-get update && sudo apt-get install -y gcc-riscv64-unknown-elf qemu-system-misc
-      - name: Build kernel
+      - name: Bytecode program
         run: |
           mkdir -p out
+          python3 tools/ptasm.py examples/hello.pta out/hello.ptb
+          python3 tools/bin2c.py out/hello.ptb kernel/hello_ptb.h hello_ptb
+      - name: Build kernel
+        run: |
           CF="-march=rv32imc_zicsr -mabi=ilp32 -O2 -ffreestanding -nostdlib -nostartfiles -fno-tree-loop-distribute-patterns"
-          riscv64-unknown-elf-gcc $CF -T kernel/link.ld kernel/entry.S kernel/kernel.c -o out/kernel.elf
+          riscv64-unknown-elf-gcc $CF -T kernel/link.ld kernel/entry.S kernel/kernel.c vm/vm.c -o out/kernel.elf
           riscv64-unknown-elf-objcopy -O binary out/kernel.elf out/kernel.bin
+          ls -l out/kernel.bin
       - name: Floppy image
         run: |
           python3 tools/mkmedia.py out/floppy.img --kernel out/kernel.bin --label PT-SYS --cls 1 --boot --load 0x80100000 --entry 0x80100000
@@ -23,10 +28,12 @@ jobs:
           riscv64-unknown-elf-gcc $CF -T boot/link.ld boot/start.S boot/boot.c -o out/boot.elf
       - name: Boot from floppy in QEMU
         run: |
-          (sleep 1; printf 'help\nver\necho hi there\nuptime\npeek 80100000\nexit\n'; sleep 5) | timeout 30 qemu-system-riscv32 -machine virt -nographic -bios none -kernel out/boot.elf -device loader,file=out/floppy.img,addr=0x80200000 | tee out/log.txt
+          (sleep 1; printf 'help\nver\necho hi there\nuptime\npeek 80100000\nrun hello\nexit\n'; sleep 5) | timeout 30 qemu-system-riscv32 -machine virt -nographic -bios none -kernel out/boot.elf -device loader,file=out/floppy.img,addr=0x80200000 | tee out/log.txt
           grep -q "image crc ok" out/log.txt
           grep -q "kernel: alive" out/log.txt
           grep -q "ecall caught" out/log.txt
-          grep -q "PT kernel 0.1" out/log.txt
+          grep -q "PT kernel 0.2" out/log.txt
           grep -q "ticks" out/log.txt
           grep -q "80100000: " out/log.txt
+          grep -q "Hello from PT bytecode" out/log.txt
+          grep -q "3628800" out/log.txt
