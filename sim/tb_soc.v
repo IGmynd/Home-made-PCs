@@ -4,7 +4,7 @@ module tb_soc;
     always #5 clk = ~clk;
     wire tx;
 
-    soc #(.RAM_AW(12), .INIT_FILE("out/selftest.hex"), .UART_DIV(4), .TICK_DIV(2))
+    soc #(.RAM_AW(13), .INIT_FILE("out/selftest.hex"), .UART_DIV(4), .TICK_DIV(2))
         dut (.clk(clk), .rst(rst), .uart_rx(1'b1), .uart_tx(tx));
 
     initial begin
