@@ -6,4 +6,4 @@ SECTIONS {
   .data : { *(.data*) }
   .bss : { *(.bss*) *(COMMON) }
 }
-_stack_top = 0x80004000;
+_stack_top = 0x80008000;
