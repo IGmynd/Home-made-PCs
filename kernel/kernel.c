@@ -1,4 +1,6 @@
 #include <stdint.h>
+#include "../vm/vm.h"
+#include "hello_ptb.h"   /* генерируется в CI из examples/hello.pta */
 
 #define UART_BASE 0x10000000u
 #define UART_THR (*(volatile uint8_t *)(UART_BASE + 0)) /* запись: передать байт */
@@ -87,6 +89,41 @@ void trap_handler(void) {
     }
 }
 
+/* ---------- виртуальная машина ---------- */
+static vm_t vm;
+static uint8_t vm_mem[2048];
+
+/* Системные вызовы байткода: 1 = putc, 2 = getc (без ожидания, -1 если нет символа) */
+static int kernel_sys(vm_t *v, uint8_t n, void *user) {
+    (void)user;
+    int32_t x;
+    int r;
+    switch (n) {
+    case 1:
+        if ((r = vm_pop(v, &x)) != 0) return r;
+        putc_((char)x);
+        return 0;
+    case 2:
+        return vm_push(v, (UART_LSR & 1) ? (int32_t)UART_RBR : -1);
+    default:
+        return VM_ERR_SYS;
+    }
+}
+
+static void run_program(const uint8_t *img, uint32_t len) {
+    int r = vm_load(&vm, img, len, vm_mem, sizeof vm_mem);
+    if (r == 0) {
+        vm.sys = kernel_sys;
+        vm.user = 0;
+        r = vm_run(&vm, 1000000);
+    }
+    if (r != VM_HALT) {
+        puts_("vm error ");
+        putdec((uint32_t)(-r));
+        puts_("\n");
+    }
+}
+
 /* ---------- шелл ---------- */
 static int streq(const char *a, const char *b) {
     while (*a && *a == *b) { a++; b++; }
@@ -120,9 +157,10 @@ static void run(const char *l) {
     if (*l == 0) return;
     if (streq(l, "help")) {
         puts_("help  - list commands\nver   - show version\necho  - print text\n");
-        puts_("uptime - time since start\npeek  - read memory word (hex addr)\nexit  - stop emulator\n");
+        puts_("uptime - time since start\npeek  - read memory word (hex addr)\n");
+        puts_("run   - run bytecode program (run hello)\nexit  - stop emulator\n");
     } else if (streq(l, "ver")) {
-        puts_("PT kernel 0.1 (RV32)\n");
+        puts_("PT kernel 0.2 (RV32)\n");
     } else if (starts(l, "echo ")) {
         puts_(l + 5);
         puts_("\n");
@@ -136,6 +174,9 @@ static void run(const char *l) {
         puts_(": ");
         puthex(*(volatile uint32_t *)a);
         puts_("\n");
+    } else if (starts(l, "run ")) {
+        if (streq(l + 4, "hello")) run_program(hello_ptb, hello_ptb_len);
+        else puts_("no such program, try: run hello\n");
     } else if (streq(l, "exit")) {
         EXIT = 0x5555;
     } else {
