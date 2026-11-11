@@ -1,6 +1,6 @@
 #include <stdint.h>
 #include "../vm/vm.h"
-#include "hello_ptb.h"   /* генерируется в CI из examples/hello.pta */
+#include "ptfs.h"
 
 #define UART_BASE 0x10000000u
 #define UART_THR (*(volatile uint8_t *)(UART_BASE + 0)) /* запись: передать байт */
@@ -89,6 +89,32 @@ void trap_handler(void) {
     }
 }
 
+/* ---------- носитель (дискета B) и файловая система ---------- */
+#ifndef MEDIA_BASE
+#define MEDIA_BASE 0x80400000u   /* пока "дискета" лежит в ОЗУ; потом тут будет драйвер флоппи */
+#endif
+
+void media_read(uint32_t lba, uint8_t *dst) {
+    const uint8_t *src = (const uint8_t *)(MEDIA_BASE + lba * 512u);
+    for (int i = 0; i < 512; i++) dst[i] = src[i];
+}
+
+static uint8_t prog[2048];
+static int fs_ready;
+
+static int fs_mount(void) {
+    if (fs_ready) return 1;
+    int r = ptfs_mount();
+    if (r != PTFS_OK) {
+        puts_("no disk B, error ");
+        putdec((uint32_t)(-r));
+        puts_("\n");
+        return 0;
+    }
+    fs_ready = 1;
+    return 1;
+}
+
 /* ---------- виртуальная машина ---------- */
 static vm_t vm;
 static uint8_t vm_mem[2048];
@@ -152,15 +178,56 @@ static int parse_hex(const char *s, uint32_t *out) {
     return n > 0 && *s == 0;
 }
 
+static void cmd_ls(void) {
+    ptfs_entry e;
+    if (!fs_mount()) return;
+    for (int i = 0; ptfs_get(i, &e) == PTFS_OK; i++) {
+        int n = 0;
+        while (e.name[n]) n++;
+        puts_(e.name);
+        for (; n < 16; n++) putc_(' ');
+        putdec(e.size);
+        puts_(e.type == PTFS_T_BYTECODE ? " bytes  program\n" :
+              e.type == PTFS_T_TEXT ? " bytes  text\n" : " bytes  data\n");
+    }
+}
+
+static int load_file(const char *name, uint8_t want, ptfs_entry *e) {
+    if (!fs_mount()) return 0;
+    if (ptfs_find(name, e) != PTFS_OK) { puts_("no such file\n"); return 0; }
+    if (e->type != want) { puts_(want == PTFS_T_TEXT ? "not a text file\n" : "not a program\n"); return 0; }
+    int r = ptfs_read(e, prog, sizeof prog);
+    if (r != PTFS_OK) {
+        puts_("read error ");
+        putdec((uint32_t)(-r));
+        puts_("\n");
+        return 0;
+    }
+    return 1;
+}
+
+static void cmd_cat(const char *name) {
+    ptfs_entry e;
+    if (!load_file(name, PTFS_T_TEXT, &e)) return;
+    for (uint32_t i = 0; i < e.size; i++) putc_((char)prog[i]);
+}
+
+static void cmd_run(const char *name) {
+    ptfs_entry e;
+    if (!load_file(name, PTFS_T_BYTECODE, &e)) return;
+    run_program(prog, e.size);
+}
+
 static void run(const char *l) {
     uint32_t a;
     if (*l == 0) return;
     if (streq(l, "help")) {
         puts_("help  - list commands\nver   - show version\necho  - print text\n");
         puts_("uptime - time since start\npeek  - read memory word (hex addr)\n");
-        puts_("run   - run bytecode program (run hello)\nexit  - stop emulator\n");
+        puts_("ls    - list files on disk B\ncat   - show text file (cat readme.txt)\n");
+        puts_("run   - run program (run hello.ptb)\nexit  - stop emulator\n");
     } else if (streq(l, "ver")) {
-        puts_("PT kernel 0.2 (RV32)\n");
+        puts_("PT kernel 0.3 (RV32)\n");
     } else if (starts(l, "echo ")) {
         puts_(l + 5);
         puts_("\n");
@@ -174,9 +241,12 @@ static void run(const char *l) {
         puts_(": ");
         puthex(*(volatile uint32_t *)a);
         puts_("\n");
+    } else if (streq(l, "ls")) {
+        cmd_ls();
+    } else if (starts(l, "cat ")) {
+        cmd_cat(l + 4);
     } else if (starts(l, "run ")) {
-        if (streq(l + 4, "hello")) run_program(hello_ptb, hello_ptb_len);
-        else puts_("no such program, try: run hello\n");
+        cmd_run(l + 4);
     } else if (streq(l, "exit")) {
         EXIT = 0x5555;
     } else {
