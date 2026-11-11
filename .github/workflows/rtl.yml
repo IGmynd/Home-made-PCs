@@ -26,13 +26,17 @@ jobs:
           grep -q "SELFTEST PASS" out/soc.txt
       - name: Shell on our core
         run: |
+          python3 tools/ptasm.py examples/hello.pta out/hello.ptb
+          python3 tools/bin2c.py out/hello.ptb kernel/hello_ptb.h hello_ptb
           CF="-march=rv32imc_zicsr -mabi=ilp32 -O2 -ffreestanding -nostdlib -nostartfiles -fno-tree-loop-distribute-patterns"
-          riscv64-unknown-elf-gcc $CF -DTICK=2000u -T sim/link.ld kernel/entry.S kernel/kernel.c -o out/ksim.elf
+          riscv64-unknown-elf-gcc $CF -DTICK=2000u -T sim/link.ld kernel/entry.S kernel/kernel.c vm/vm.c -o out/ksim.elf
           riscv64-unknown-elf-objcopy -O binary out/ksim.elf out/ksim.bin
           python3 tools/bin2hex.py out/ksim.bin out/ksim.hex
           iverilog -g2012 -Wall -o out/shell.vvp rtl/cpu.v rtl/soc.v rtl/uart.v rtl/clint.v sim/tb_shell.v
           vvp out/shell.vvp | tee out/shell.txt
           grep -q "PT shell" out/shell.txt
-          grep -q "PT kernel 0.1" out/shell.txt
+          grep -q "PT kernel 0.2" out/shell.txt
           grep -q "uptime: " out/shell.txt
           grep -q "80000000: " out/shell.txt
+          grep -q "Hello from PT bytecode" out/shell.txt
+          grep -q "3628800" out/shell.txt
