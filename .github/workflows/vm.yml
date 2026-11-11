@@ -1,0 +1,24 @@
+name: vm
+on: [push, workflow_dispatch]
+jobs:
+  vm:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Unit tests
+        run: |
+          mkdir -p out
+          gcc -Wall -Wextra -O2 -fsanitize=address,undefined -o out/test_vm vm/test_vm.c vm/vm.c
+          ./out/test_vm | tee out/vm_tests.txt
+          grep -q "VM TESTS PASS" out/vm_tests.txt
+      - name: Assemble and run example
+        run: |
+          python3 tools/ptasm.py examples/hello.pta out/hello.ptb
+          gcc -Wall -Wextra -O2 -o out/host vm/host.c vm/vm.c
+          ./out/host out/hello.ptb | tee out/hello.txt
+          grep -qx "Hello from PT bytecode" out/hello.txt
+          grep -qx "3628800" out/hello.txt
+      - name: Build VM for RV32 (no libc)
+        run: |
+          sudo apt-get update && sudo apt-get install -y gcc-riscv64-unknown-elf
+          riscv64-unknown-elf-gcc -march=rv32imc_zicsr -mabi=ilp32 -O2 -Wall -Wextra -ffreestanding -nostdlib -c vm/vm.c -o out/vm_rv32.o
