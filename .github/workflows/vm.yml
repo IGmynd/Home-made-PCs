@@ -18,7 +18,17 @@ jobs:
           ./out/host out/hello.ptb | tee out/hello.txt
           grep -qx "Hello from PT bytecode" out/hello.txt
           grep -qx "3628800" out/hello.txt
-      - name: Build VM for RV32 (no libc)
+      - name: Filesystem test
+        run: |
+          python3 tools/ptasm.py examples/fib.pta out/fib.ptb
+          python3 tools/mkfs.py out/fs.img out/hello.ptb out/fib.ptb examples/readme.txt
+          python3 tools/mkmedia.py out/floppyB.img --kernel out/fs.img --label PT-USER --cls 2
+          gcc -Wall -Wextra -O2 -fsanitize=address,undefined -o out/test_ptfs kernel/test_ptfs.c kernel/ptfs.c vm/vm.c
+          ./out/test_ptfs out/floppyB.img | tee out/ptfs.txt
+          grep -q "PTFS TESTS PASS" out/ptfs.txt
+      - name: Build VM and filesystem for RV32 (no libc)
         run: |
           sudo apt-get update && sudo apt-get install -y gcc-riscv64-unknown-elf
-          riscv64-unknown-elf-gcc -march=rv32imc_zicsr -mabi=ilp32 -O2 -Wall -Wextra -ffreestanding -nostdlib -c vm/vm.c -o out/vm_rv32.o
+          CF="-march=rv32imc_zicsr -mabi=ilp32 -O2 -Wall -Wextra -ffreestanding -nostdlib"
+          riscv64-unknown-elf-gcc $CF -c vm/vm.c -o out/vm_rv32.o
+          riscv64-unknown-elf-gcc $CF -c kernel/ptfs.c -o out/ptfs_rv32.o
