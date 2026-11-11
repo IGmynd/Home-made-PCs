@@ -1,0 +1,63 @@
+; Первая программа для ВМ ПТ: печатает строку и факториал 10.
+.data
+msg:  .string "Hello from PT bytecode\n"
+n:    .word 10
+acc:  .word 1
+
+.code
+        push msg            ; ( addr )
+print_str:
+        dup
+        ld8                 ; ( addr c )
+        dup
+        jz str_end          ; конец строки (c == 0)
+        sys 1               ; putc ( addr )
+        push 1
+        add
+        jmp print_str
+str_end:
+        drop
+        drop
+
+loop:                       ; пока n != 0: acc = acc * n; n = n - 1
+        push n
+        ld32
+        jz done
+        push acc
+        ld32
+        push n
+        ld32
+        mul
+        push acc
+        st32                ; acc = acc * n
+        push n
+        ld32
+        push 1
+        sub
+        push n
+        st32                ; n = n - 1
+        jmp loop
+done:
+        push acc
+        ld32
+        call print_num
+        push 10
+        sys 1               ; перевод строки
+        halt
+
+print_num:                  ; ( n -- ) печатает неотрицательное число
+        dup
+        push 10
+        lt
+        jnz small           ; n < 10: одна цифра
+        dup
+        push 10
+        div                 ; ( n n/10 )
+        call print_num
+        push 10
+        mod                 ; ( n%10 )
+small:
+        push '0'
+        add
+        sys 1
+        ret
