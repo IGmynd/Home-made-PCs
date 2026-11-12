@@ -559,7 +559,7 @@ class Gen:
                 self.emit("st32")
                 self.emit("push", 0)
             elif name == "писать_байт":
-self.emit("swap")
+                self.emit("swap")
                 self.emit("st8")
                 self.emit("push", 0)
             elif name == "свободная_память":
