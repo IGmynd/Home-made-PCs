@@ -9,7 +9,8 @@ enum {
     OP_EQ = 0x20, OP_NE = 0x21, OP_LT = 0x22, OP_LE = 0x23, OP_GT = 0x24, OP_GE = 0x25,
     OP_LD32 = 0x30, OP_ST32 = 0x31, OP_LD8 = 0x32, OP_ST8 = 0x33,
     OP_JMP = 0x40, OP_JZ = 0x41, OP_JNZ = 0x42, OP_CALL = 0x43, OP_RET = 0x44,
-    OP_SYS = 0x50
+    OP_SYS = 0x50,
+    OP_FRAME = 0x60, OP_LEAVE = 0x61, OP_LDL = 0x62, OP_STL = 0x63
 };
 
 static uint32_t rd32(const uint8_t *p) {
@@ -43,6 +44,9 @@ int vm_load(vm_t *vm, const uint8_t *img, uint32_t len, uint8_t *mem, uint32_t m
     for (uint32_t i = 0; i < mem_len; i++) mem[i] = 0;
     for (uint32_t i = 0; i < data_len; i++) mem[i] = img[16 + code_len + i];
     vm->pc = 0; vm->sp = 0; vm->rp = 0;
+    vm->fp_top = mem_len & ~3u;
+    vm->fp = vm->fp_top;
+    vm->frame_lo = (data_len + 3u) & ~3u;
     return 0;
 }
 
@@ -161,6 +165,48 @@ int vm_run(vm_t *vm, uint32_t max_steps) {
             if (!vm->sys) return VM_ERR_SYS;
             int r = vm->sys(vm, n, vm->user);
             if (r != 0) return r;
+            break;
+        }
+
+        case OP_FRAME: {                     /* n слотов; заголовок кадра: [прежний fp][n] */
+            if (vm->pc + 1 > vm->code_len) return VM_ERR_BADOP;
+            uint32_t n = vm->code[vm->pc++];
+            uint32_t size = 4u * (n + 2u);
+            if (vm->fp < vm->frame_lo || vm->fp - vm->frame_lo < size) return VM_ERR_FRAME;
+            uint32_t nf = vm->fp - size;
+            for (uint32_t i = 8; i < size; i++) vm->mem[nf + i] = 0;      /* слоты обнуляем */
+            vm->mem[nf]     = (uint8_t)vm->fp;
+            vm->mem[nf + 1] = (uint8_t)(vm->fp >> 8);
+            vm->mem[nf + 2] = (uint8_t)(vm->fp >> 16);
+            vm->mem[nf + 3] = (uint8_t)(vm->fp >> 24);
+            vm->mem[nf + 4] = (uint8_t)n;
+            vm->mem[nf + 5] = vm->mem[nf + 6] = vm->mem[nf + 7] = 0;
+            vm->fp = nf;
+            break;
+        }
+        case OP_LEAVE: {
+            if (vm->fp >= vm->fp_top) return VM_ERR_FRAME;
+            uint32_t old = rd32(vm->mem + vm->fp);
+            if (old <= vm->fp || old > vm->fp_top || (old & 3u)) return VM_ERR_FRAME;
+            vm->fp = old;
+            break;
+        }
+        case OP_LDL: case OP_STL: {
+            if (vm->pc + 1 > vm->code_len) return VM_ERR_BADOP;
+            uint32_t i = vm->code[vm->pc++];
+            if (vm->fp >= vm->fp_top) return VM_ERR_FRAME;
+            if (i >= rd32(vm->mem + vm->fp + 4)) return VM_ERR_FRAME;
+            uint32_t addr = vm->fp + 8u + 4u * i;
+            if (!mem_ok(vm, addr, 4)) return VM_ERR_FRAME;     /* заголовок кадра могли испортить */
+            if (op == OP_LDL) {
+                PUSH((int32_t)rd32(vm->mem + addr));
+            } else {
+                POP(a);
+                vm->mem[addr]     = (uint8_t)(U(a));
+                vm->mem[addr + 1] = (uint8_t)(U(a) >> 8);
+                vm->mem[addr + 2] = (uint8_t)(U(a) >> 16);
+                vm->mem[addr + 3] = (uint8_t)(U(a) >> 24);
+            }
             break;
         }
 
