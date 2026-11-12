@@ -26,7 +26,7 @@ module soc #(
     );
 
     wire xfer      = mem_valid && !mem_ready;       // первый такт обращения
-    wire sel_ram   = (mem_addr[31:16] == 16'h8000);
+    wire sel_ram   = (mem_addr[31:RAM_AW+2] == (32'h8000_0000 >> (RAM_AW + 2)));
     wire sel_uart  = (mem_addr[31:12] == 20'h10000);
     wire sel_clint = (mem_addr[31:16] == 16'h0200);
 
