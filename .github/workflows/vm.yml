@@ -18,6 +18,16 @@ jobs:
           ./out/host out/hello.ptb | tee out/hello.txt
           grep -qx "Hello from PT bytecode" out/hello.txt
           grep -qx "3628800" out/hello.txt
+      - name: Slog examples
+        run: |
+          for f in privet fakt prostye; do
+            python3 tools/slog.py examples/$f.sl out/$f.pta
+            python3 tools/ptasm.py out/$f.pta out/$f.ptb
+            ./out/host out/$f.ptb | tee out/$f.txt
+          done
+          grep -qx "Привет, мир!" out/privet.txt
+          grep -qx "факториал 10 = 3628800" out/fakt.txt
+          grep -qx "всего: 15" out/prostye.txt
       - name: Filesystem test
         run: |
           python3 tools/ptasm.py examples/fib.pta out/fib.ptb
