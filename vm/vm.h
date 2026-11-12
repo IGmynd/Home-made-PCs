@@ -5,7 +5,7 @@
 #include <stdint.h>
 
 #define PTVM_DS_SIZE 256   /* глубина стека данных (ячеек) */
-#define PTVM_RS_SIZE 64    /* глубина стека возвратов */
+#define PTVM_RS_SIZE 128   /* глубина стека возвратов */
 
 enum {
     VM_HALT       = 0,     /* штатное завершение (команда HALT) */
@@ -19,7 +19,8 @@ enum {
     VM_ERR_JUMP   = -8,    /* переход за пределы кода */
     VM_ERR_STEPS  = -9,    /* исчерпан лимит шагов */
     VM_ERR_IMAGE  = -10,   /* повреждённый образ программы */
-    VM_ERR_SYS    = -11    /* системный вызов не поддерживается */
+    VM_ERR_SYS    = -11,   /* системный вызов не поддерживается */
+    VM_ERR_FRAME  = -12    /* ошибка кадра локальных переменных */
 };
 
 struct vm;
@@ -32,6 +33,7 @@ typedef struct vm {
     uint32_t pc;
     int32_t  ds[PTVM_DS_SIZE];  uint32_t sp;   /* sp = число значений на стеке */
     uint32_t rs[PTVM_RS_SIZE];  uint32_t rp;
+    uint32_t fp, fp_top, frame_lo;             /* кадры локальных переменных растут вниз от fp_top */
     vm_sys_fn sys;  void *user;
 } vm_t;
 
