@@ -657,7 +657,7 @@ class Gen:
             raise SlogError(0, f"внутренняя ошибка: {k}")
 
     def function(self, st):
-_, name, params, body, line = st
+        _, name, params, body, line = st
         label, _, _ = self.funcs[name]
         decl = {}
         self.declared_globals(body, decl)
