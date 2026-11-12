@@ -99,7 +99,7 @@ void media_read(uint32_t lba, uint8_t *dst) {
     for (int i = 0; i < 512; i++) dst[i] = src[i];
 }
 
-static uint8_t prog[2048];
+static uint8_t prog[4096];
 static int fs_ready;
 
 static int fs_mount(void) {
