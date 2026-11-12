@@ -89,6 +89,26 @@ static void t_mem(void) {
     { CODE(P8(-86), P8(5), 0x33, P8(5), 0x32, 0x00); RUN(0); check("st8/ld8", vm.ds[0], 0xAA); }
 }
 
+static void t_frames(void) {
+    vm_t vm;
+    /* frame 2; push 7; stl 0; push 9; stl 1; ldl 0; ldl 1; add; leave; halt */
+    { CODE(0x60, 2, P8(7), 0x63, 0, P8(9), 0x63, 1, 0x62, 0, 0x62, 1, 0x10, 0x61, 0x00);
+      check("frame run", RUN(0), VM_HALT); check("frame val", vm.ds[0], 16); check("frame fp", vm.fp, vm.fp_top); }
+    { CODE(0x60, 1, 0x62, 0, 0x61, 0x00); RUN(0); check("frame zeroed", vm.ds[0], 0); }
+    { CODE(0x61); check("leave no frame", RUN(0), VM_ERR_FRAME); }
+    { CODE(0x62, 0); check("ldl no frame", RUN(0), VM_ERR_FRAME); }
+    { CODE(0x60, 1, 0x62, 1); check("ldl range", RUN(0), VM_ERR_FRAME); }
+    { CODE(0x60, 1, P8(5), 0x63, 3); check("stl range", RUN(0), VM_ERR_FRAME); }
+    { CODE(0x60, 100); check("frame too big", RUN(0), VM_ERR_FRAME); }
+    { CODE(0x60, 20, 0x40, 0, 0, 0, 0); check("frame overflow", RUN(0), VM_ERR_FRAME); }
+    /* программа портит заголовок своего кадра: ldl обязан отказать, а не читать за пределами памяти */
+    { CODE(0x60, 1, P32(1000000), P32(248), 0x31, 0x62, 200); check("corrupt n ldl", RUN(0), VM_ERR_FRAME); }
+    { CODE(0x60, 1, P32(1000000), P32(248), 0x31, P8(5), 0x63, 200); check("corrupt n stl", RUN(0), VM_ERR_FRAME); }
+    /* вложенные кадры и восстановление: frame 1; push 5; stl 0; frame 1; push 6; stl 0; leave; ldl 0; leave; halt */
+    { CODE(0x60, 1, P8(5), 0x63, 0, 0x60, 1, P8(6), 0x63, 0, 0x61, 0x62, 0, 0x61, 0x00);
+      check("nested", RUN(0), VM_HALT); check("nested val", vm.ds[0], 5); }
+}
+
 static void t_load(void) {
     vm_t vm;
     static uint8_t mem[16];
@@ -106,6 +126,7 @@ int main(void) {
     t_stack();
     t_errors();
     t_mem();
+    t_frames();
     t_load();
     if (fails == 0) puts("VM TESTS PASS");
     else printf("VM TESTS FAIL: %d\n", fails);
