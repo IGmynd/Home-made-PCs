@@ -109,6 +109,22 @@ static void t_frames(void) {
       check("nested", RUN(0), VM_HALT); check("nested val", vm.ds[0], 5); }
 }
 
+static void t_heap(void) {
+    vm_t vm;
+    /* alloc 8 -> адрес, пишем и читаем слово */
+    { CODE(P8(8), 0x52, 0x03, P32(777), 0x05, 0x31, 0x30, 0x00);   /* alloc; dup; push 777; swap; st32; ld32 */
+      check("alloc run", RUN(0), VM_HALT); check("alloc val", vm.ds[0], 777); }
+    { CODE(P8(5), 0x52, P8(1), 0x52, 0x00); RUN(0);                /* 5 байт округляются до 8 */
+      check("alloc first", vm.ds[0], 0); check("alloc second", vm.ds[1], 8); }
+    { CODE(P8(-1), 0x52, 0x00); check("alloc negative", RUN(0), VM_ERR_MEM); }
+    { CODE(P32(100000), 0x52, 0x00); check("alloc too big", RUN(0), VM_ERR_MEM); }
+    { CODE(0x51, 7); check("trap", RUN(0), VM_ERR_TRAP); check("trap code", vm.trap_code, 7); }
+    { CODE(0x51); check("trap truncated", RUN(0), VM_ERR_BADOP); }
+    /* куча и кадры не пересекаются: после большой кучи кадр не помещается */
+    { CODE(P8(100), 0x52, 0x04, 0x60, 60, 0x00); check("heap blocks frame", RUN(0), VM_ERR_FRAME); }
+    /* после кадра куча не может залезть на него */
+    { CODE(0x60, 40, P8(100), 0x52, 0x00); check("frame blocks heap", RUN(0), VM_ERR_MEM); }
+}
 static void t_load(void) {
     vm_t vm;
     static uint8_t mem[16];
@@ -127,6 +143,7 @@ int main(void) {
     t_errors();
     t_mem();
     t_frames();
+    t_heap();
     t_load();
     if (fails == 0) puts("VM TESTS PASS");
     else printf("VM TESTS FAIL: %d\n", fails);
