@@ -18,12 +18,12 @@ OPS = {
     "eq": 0x20, "ne": 0x21, "lt": 0x22, "le": 0x23, "gt": 0x24, "ge": 0x25,
     "ld32": 0x30, "st32": 0x31, "ld8": 0x32, "st8": 0x33,
     "jmp": 0x40, "jz": 0x41, "jnz": 0x42, "call": 0x43, "ret": 0x44,
-    "sys": 0x50,
+        "sys": 0x50, "trap": 0x51, "alloc": 0x52,
     "frame": 0x60, "leave": 0x61, "ldl": 0x62, "stl": 0x63,
 }
 NO_ARG = {"halt", "dup", "drop", "swap", "over", "add", "sub", "mul", "div", "mod", "and",
           "or", "xor", "shl", "shr", "sar", "neg", "not", "eq", "ne", "lt", "le", "gt",
-          "ge", "ld32", "st32", "ld8", "st8", "ret", "leave"}
+          "ge", "ld32", "st32", "ld8", "st8", "ret", "leave", "alloc"}
 JUMPS = {"jmp", "jz", "jnz", "call"}
 LABEL = re.compile(r"^\s*([A-Za-z_][A-Za-z0-9_]*)\s*:(.*)$")
 
@@ -111,7 +111,7 @@ def assemble(text):
             size = 1
             if rest:
                 raise AsmError(f"строка {lineno}: {head} без аргумента")
-        elif head in ("push8", "sys", "frame", "ldl", "stl"):
+        elif head in ("push8", "sys", "trap", "frame", "ldl", "stl"):
             size = 2
         else:
             size = 5
@@ -138,7 +138,7 @@ def assemble(text):
             if not -128 <= val <= 127:
                 raise AsmError(f"строка {lineno}: {val} не влезает в push8")
             code.append(val & 0xFF)
-        elif head in ("sys", "frame", "ldl", "stl"):
+        elif head in ("sys", "trap", "frame", "ldl", "stl"):
             if not 0 <= val <= 255:
                 raise AsmError(f"строка {lineno}: аргумент {head} вне 0..255")
             code.append(val)
