@@ -20,7 +20,8 @@ enum {
     VM_ERR_STEPS  = -9,    /* исчерпан лимит шагов */
     VM_ERR_IMAGE  = -10,   /* повреждённый образ программы */
     VM_ERR_SYS    = -11,   /* системный вызов не поддерживается */
-    VM_ERR_FRAME  = -12    /* ошибка кадра локальных переменных */
+    VM_ERR_FRAME  = -12,   /* ошибка кадра локальных переменных */
+    VM_ERR_TRAP   = -13    /* программа сама остановила себя командой TRAP (код в trap_code) */
 };
 
 struct vm;
@@ -33,7 +34,8 @@ typedef struct vm {
     uint32_t pc;
     int32_t  ds[PTVM_DS_SIZE];  uint32_t sp;   /* sp = число значений на стеке */
     uint32_t rs[PTVM_RS_SIZE];  uint32_t rp;
-    uint32_t fp, fp_top, frame_lo;             /* кадры локальных переменных растут вниз от fp_top */
+    uint32_t fp, fp_top, heap_end;             /* кадры растут вниз от fp_top, куча вверх от данных до heap_end */
+    uint32_t trap_code;
     vm_sys_fn sys;  void *user;
 } vm_t;
 
