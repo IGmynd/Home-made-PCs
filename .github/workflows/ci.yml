@@ -12,7 +12,11 @@ jobs:
           mkdir -p out
           python3 tools/ptasm.py examples/hello.pta out/hello.ptb
           python3 tools/ptasm.py examples/fib.pta out/fib.ptb
-          python3 tools/mkfs.py out/fs.img out/hello.ptb out/fib.ptb examples/readme.txt
+          for f in privet fakt prostye; do
+            python3 tools/slog.py examples/$f.sl out/$f.pta
+            python3 tools/ptasm.py out/$f.pta out/$f.ptb
+          done
+          python3 tools/mkfs.py out/fs.img out/hello.ptb out/fib.ptb out/privet.ptb out/fakt.ptb out/prostye.ptb examples/readme.txt
           python3 tools/mkmedia.py out/floppyB.img --kernel out/fs.img --label PT-USER --cls 2
           python3 tools/mkmedia.py out/floppyB.img --check
       - name: Build kernel
@@ -31,7 +35,7 @@ jobs:
           riscv64-unknown-elf-gcc $CF -T boot/link.ld boot/start.S boot/boot.c -o out/boot.elf
       - name: Boot from floppy in QEMU
         run: |
-          (sleep 1; printf 'help\nver\necho hi there\nuptime\npeek 80100000\nls\ncat readme.txt\nrun hello.ptb\nrun fib.ptb\nexit\n'; sleep 5) | timeout 30 qemu-system-riscv32 -machine virt -nographic -bios none -kernel out/boot.elf -device loader,file=out/floppy.img,addr=0x80200000 -device loader,file=out/floppyB.img,addr=0x80400000 | tee out/log.txt
+          (sleep 1; printf 'help\nver\necho hi there\nuptime\npeek 80100000\nls\ncat readme.txt\nrun hello.ptb\nrun fib.ptb\nrun privet.ptb\nrun fakt.ptb\nrun prostye.ptb\nexit\n'; sleep 5) | timeout 30 qemu-system-riscv32 -machine virt -nographic -bios none -kernel out/boot.elf -device loader,file=out/floppy.img,addr=0x80200000 -device loader,file=out/floppyB.img,addr=0x80400000 | tee out/log.txt
           grep -q "image crc ok" out/log.txt
           grep -q "kernel: alive" out/log.txt
           grep -q "ecall caught" out/log.txt
@@ -42,3 +46,6 @@ jobs:
           grep -q "Hello from PT bytecode" out/log.txt
           grep -q "3628800" out/log.txt
           grep -q "0 1 1 2 3 5 8 13 21 34" out/log.txt
+          grep -q "Привет, мир!" out/log.txt
+          grep -q "факториал 10 = 3628800" out/log.txt
+          grep -q "всего: 15" out/log.txt
