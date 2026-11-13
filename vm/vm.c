@@ -9,7 +9,7 @@ enum {
     OP_EQ = 0x20, OP_NE = 0x21, OP_LT = 0x22, OP_LE = 0x23, OP_GT = 0x24, OP_GE = 0x25,
     OP_LD32 = 0x30, OP_ST32 = 0x31, OP_LD8 = 0x32, OP_ST8 = 0x33,
     OP_JMP = 0x40, OP_JZ = 0x41, OP_JNZ = 0x42, OP_CALL = 0x43, OP_RET = 0x44,
-    OP_SYS = 0x50,
+    OP_SYS = 0x50, OP_TRAP = 0x51, OP_ALLOC = 0x52,
     OP_FRAME = 0x60, OP_LEAVE = 0x61, OP_LDL = 0x62, OP_STL = 0x63
 };
 
@@ -46,7 +46,8 @@ int vm_load(vm_t *vm, const uint8_t *img, uint32_t len, uint8_t *mem, uint32_t m
     vm->pc = 0; vm->sp = 0; vm->rp = 0;
     vm->fp_top = mem_len & ~3u;
     vm->fp = vm->fp_top;
-    vm->frame_lo = (data_len + 3u) & ~3u;
+    vm->heap_end = (data_len + 3u) & ~3u;
+    vm->trap_code = 0;
     return 0;
 }
 
@@ -168,11 +169,28 @@ int vm_run(vm_t *vm, uint32_t max_steps) {
             break;
         }
 
+        case OP_TRAP:                        /* остановка с кодом: «индекс вне списка» и тому подобное */
+            if (vm->pc + 1 > vm->code_len) return VM_ERR_BADOP;
+            vm->trap_code = vm->code[vm->pc++];
+            return VM_ERR_TRAP;
+
+        case OP_ALLOC: {                     /* ( байты -- адрес ) выделяет и обнуляет память кучи */
+            POP(a);
+            if (a < 0) return VM_ERR_MEM;
+            uint64_t need = ((uint64_t)(uint32_t)a + 3u) & ~(uint64_t)3u;
+            if ((uint64_t)vm->heap_end + need > vm->fp) return VM_ERR_MEM;
+            uint32_t addr = vm->heap_end;
+            for (uint32_t i = 0; i < (uint32_t)need; i++) vm->mem[addr + i] = 0;
+            vm->heap_end += (uint32_t)need;
+            PUSH((int32_t)addr);
+            break;
+        }
+
         case OP_FRAME: {                     /* n слотов; заголовок кадра: [прежний fp][n] */
             if (vm->pc + 1 > vm->code_len) return VM_ERR_BADOP;
             uint32_t n = vm->code[vm->pc++];
             uint32_t size = 4u * (n + 2u);
-            if (vm->fp < vm->frame_lo || vm->fp - vm->frame_lo < size) return VM_ERR_FRAME;
+            if (vm->fp < vm->heap_end || vm->fp - vm->heap_end < size) return VM_ERR_FRAME;
             uint32_t nf = vm->fp - size;
             for (uint32_t i = 8; i < size; i++) vm->mem[nf + i] = 0;      /* слоты обнуляем */
             vm->mem[nf]     = (uint8_t)vm->fp;
