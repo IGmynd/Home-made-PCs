@@ -28,6 +28,10 @@ jobs:
           grep -qx "Привет, мир!" out/privet.txt
           grep -qx "факториал 10 = 3628800" out/fakt.txt
           grep -qx "всего: 15" out/prostye.txt
+      - name: Slog compiler tests
+        run: |
+          python3 tools/test_slog.py out/host | tee out/slog_tests.txt
+          grep -q "SLOG TESTS PASS" out/slog_tests.txt
       - name: Filesystem test
         run: |
           python3 tools/ptasm.py examples/fib.pta out/fib.ptb
