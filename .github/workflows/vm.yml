@@ -20,7 +20,7 @@ jobs:
           grep -qx "3628800" out/hello.txt
       - name: Slog examples
         run: |
-          for f in privet fakt prostye; do
+          for f in privet fakt prostye sort sito; do
             python3 tools/slog.py examples/$f.sl out/$f.pta
             python3 tools/ptasm.py out/$f.pta out/$f.ptb
             ./out/host out/$f.ptb | tee out/$f.txt
@@ -28,10 +28,16 @@ jobs:
           grep -qx "Привет, мир!" out/privet.txt
           grep -qx "факториал 10 = 3628800" out/fakt.txt
           grep -qx "всего: 15" out/prostye.txt
+          grep -qx "по порядку:" out/sort.txt
+          grep -qx "простых до 100 это 25" out/sito.txt
       - name: Slog compiler tests
         run: |
           python3 tools/test_slog.py out/host | tee out/slog_tests.txt
           grep -q "SLOG TESTS PASS" out/slog_tests.txt
+      - name: Slog compiler tests, part 2 (lists, loops, numbers)
+        run: |
+          python3 tools/test_slog2.py out/host | tee out/slog2_tests.txt
+          grep -q "SLOG2 TESTS PASS" out/slog2_tests.txt
       - name: Filesystem test
         run: |
           python3 tools/ptasm.py examples/fib.pta out/fib.ptb
