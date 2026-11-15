@@ -1,19 +1,21 @@
 """Слог: генератор. Обходит дерево программы и выдаёт ассемблер байткода ПТ."""
 from slog_lex import KEYWORDS, SlogError
 from slog_parse import PRINT, RANGE
+from slog_rt import runtime
+from slog_types import Types, line_of
 
 # встроенные функции-выражения: имя -> число аргументов
 BUILTINS = {"символ": 1, "ввод_символ": 0, "читать": 1, "писать": 2,
             "читать_байт": 1, "писать_байт": 2, "выделить": 1,
-            "список": 1, "длина": 1}
-RESERVED = KEYWORDS | set(BUILTINS) | {PRINT, RANGE}
+            "список": 1, "длина": 1,
+            "строка": 1, "число": 1, "срез": 3, "из_кода": 1, "строкой": 1}
+# зарезервированы слова языка, «печать» и «диапазон»; имена встроенных функций занять можно:
+# переменная «число» и вызов «число(...)» различаются скобками, а своя функция заменяет встроенную
+RESERVED = KEYWORDS | {PRINT, RANGE}
 
 BINOPS = {"+": "add", "-": "sub", "*": "mul", "//": "div", "%": "mod", "&": "and", "|": "or",
           "^": "xor", "<<": "shl", ">>": "sar", "==": "eq", "!=": "ne", "<": "lt", "<=": "le",
           ">": "gt", ">=": "ge"}
-
-TRAP_INDEX = 1      # индекс вне списка
-TRAP_SIZE = 2       # недопустимый размер списка
 
 
 def const_int(e):
@@ -30,12 +32,56 @@ class Gen:
         self.prog = prog
         self.funcs = {}        # имя -> (метка, параметры, строка)
         self.globals = {}      # имя -> метка
-        self.strings = []      # (метка, байты)
         self.code = []
         self.n = 0
         self.fn = None         # контекст функции: dict(locals)
         self.loops = []        # (метка продолжения, метка выхода)
-        self.used_pnum = self.used_pstr = self.used_idx = self.used_new = False
+        self.used = set()      # какие подпрограммы из slog_rt нужны
+        self.func_info = {}    # имя функции -> label, params, locals, body, line
+        self.main_body = []
+        self.types = None
+        self.scope = None      # имя текущей функции или None наверху
+        self.str_labels = {}   # текст строки -> метка в данных
+
+    def need(self, name):
+        self.used.add(name)
+
+    def ty(self, e):
+        return self.types.ty(e, self.scope)
+
+    def need_int(self, e, what):
+        if self.ty(e) == "str":
+            raise SlogError(line_of(e), f"{what}: ожидалось число, а не строка")
+
+    def need_str(self, e, what):
+        if self.ty(e) != "str":
+            raise SlogError(line_of(e), f"{what}: ожидалась строка (для элемента списка используйте «строкой(...)»)")
+
+    def string_label(self, text):
+        if text not in self.str_labels:
+            self.str_labels[text] = f"s_{len(self.str_labels)}"
+        return self.str_labels[text]
+
+    def binop(self, op, tl, tr, line):
+        """Применить операцию к двум значениям на стеке ( л п ) с учётом их типов."""
+        if "str" in (tl, tr):
+            if op == "+":
+                if tl == tr:
+                    self.emit("call", "__scat")
+                    self.need("scat")
+                    return
+                raise SlogError(line, "нельзя сложить строку и число (число в строку превращает «строка(...)»)")
+            if op in ("==", "!="):
+                if tl == tr:
+                    self.emit("call", "__seq")
+                    self.need("seq")
+                    if op == "!=":
+                        self.emit("push", 0)
+                        self.emit("eq")
+                    return
+                raise SlogError(line, "нельзя сравнивать строку с числом")
+            raise SlogError(line, f"операция «{op}» к строкам не применима (строки можно складывать и сравнивать на == и !=)")
+        self.emit(BINOPS[op])
 
     def new(self, prefix):
         self.n += 1
@@ -119,6 +165,33 @@ class Gen:
             if name in self.funcs:
                 raise SlogError(ln, f"имя «{name}» занято функцией, переменной оно быть не может")
             self.globals[name] = f"g_{len(self.globals)}"
+        self.main_body = top
+        for st in self.prog:
+            if st[0] == "func":
+                self.func_info[st[1]] = self.collect_locals(st)
+        self.types = Types(self)
+        self.types.infer()
+
+    def collect_locals(self, st):
+        _, name, params, body, line = st
+        decl = {}
+        self.declared_globals(body, decl)
+        for p in params:
+            if p in decl:
+                raise SlogError(line, f"параметр «{p}» нельзя объявить глобальной переменной")
+        locs = {p: i for i, p in enumerate(params)}
+        found = {}
+        self.assigned(body, found)
+        for name2, ln in sorted(found.items(), key=lambda kv: kv[1]):
+            if name2 in decl or name2 in params:
+                continue
+            self.check_name(name2, ln, "имя переменной")
+            if name2 in self.funcs:
+                raise SlogError(ln, f"имя «{name2}» занято функцией")
+            locs[name2] = len(locs)
+        if len(locs) > 255:
+            raise SlogError(line, "слишком много локальных переменных (максимум 255)")
+        return {"label": self.funcs[name][0], "params": params, "locals": locs, "body": body, "line": line}
 
     # --- переменные
     def load(self, name, line):
@@ -147,21 +220,25 @@ class Gen:
         if k == "num":
             self.emit("push", e[1])
         elif k == "str":
-            raise SlogError(e[2], "строка допустима только внутри «печать»")
+            self.emit("push", self.string_label(e[1]))
         elif k == "var":
             self.load(e[1], e[2])
         elif k == "un":
+            self.need_int(e[2], "унарная операция")
             self.expr(e[2])
             self.emit("neg" if e[1] == "-" else "not")
         elif k == "bin":
             self.expr(e[2])
             self.expr(e[3])
-            self.emit(BINOPS[e[1]])
+            self.binop(e[1], self.ty(e[2]), self.ty(e[3]), e[4])
         elif k == "not":
+            self.need_int(e[1], "«не»")
             self.expr(e[1])
             self.emit("push", 0)
             self.emit("eq")
         elif k == "and":
+            self.need_int(e[1], "«и»")
+            self.need_int(e[2], "«и»")
             lf, le = self.new("L_and_f"), self.new("L_and_e")
             self.expr(e[1])
             self.emit("jz", lf)
@@ -173,6 +250,8 @@ class Gen:
             self.emit("push", 0)
             self.label(le)
         elif k == "or":
+            self.need_int(e[1], "«или»")
+            self.need_int(e[2], "«или»")
             lt, le = self.new("L_or_t"), self.new("L_or_e")
             self.expr(e[1])
             self.emit("jnz", lt)
@@ -187,7 +266,7 @@ class Gen:
             elems = e[1]
             self.emit("push", len(elems))
             self.emit("call", "__new")
-            self.used_new = True
+            self.need("new")
             for i, el in enumerate(elems):
                 self.emit("dup")                  # ( адрес адрес )
                 self.emit("push", 4 + 4 * i)
@@ -205,10 +284,11 @@ class Gen:
 
     def index_addr(self, e):
         """Кладёт на стек адрес элемента списка, проверив границы."""
+        self.need_int(e[2], "индекс")
         self.expr(e[1])
         self.expr(e[2])
         self.emit("call", "__idx")
-        self.used_idx = True
+        self.need("idx")
 
     def call(self, e):
         _, name, args, line = e
@@ -216,9 +296,17 @@ class Gen:
             raise SlogError(line, "«печать» это команда, её нельзя использовать внутри выражения")
         if name == RANGE:
             raise SlogError(line, "«диапазон» можно использовать только в цикле «для»")
-        if name in BUILTINS:
+        if name in BUILTINS and name not in self.funcs:
             if len(args) != BUILTINS[name]:
                 raise SlogError(line, f"«{name}» принимает аргументов: {BUILTINS[name]}, передано: {len(args)}")
+            if name in ("число", "срез"):
+                self.need_str(args[0], f"«{name}»")
+            elif name != "длина":
+                for a in (args[1:] if name == "срез" else args):
+                    self.need_int(a, f"«{name}»")
+            if name == "срез":
+                for a in args[1:]:
+                    self.need_int(a, "«срез»")
             for a in args:
                 self.expr(a)
             if name == "символ":
@@ -242,9 +330,22 @@ class Gen:
                 self.emit("alloc")
             elif name == "список":
                 self.emit("call", "__new")
-                self.used_new = True
+                self.need("new")
             elif name == "длина":
                 self.emit("ld32")
+            elif name == "строка":
+                self.emit("call", "__itos")
+                self.need("itos")
+            elif name == "число":
+                self.emit("call", "__stoi")
+                self.need("stoi")
+            elif name == "срез":
+                self.emit("call", "__slice")
+                self.need("slice")
+            elif name == "из_кода":
+                self.emit("call", "__chr")
+                self.need("chr")
+            # «строкой» ничего не делает во время работы: это только указание типа
             return
         if name not in self.funcs:
             raise SlogError(line, f"функция «{name}» не определена")
@@ -268,13 +369,14 @@ class Gen:
         elif k == "aug":
             self.load(st[1], st[4])
             self.expr(st[3])
-            self.emit(BINOPS[st[2]])
+            self.binop(st[2], self.ty(("var", st[1], st[4])), self.ty(st[3]), st[4])
             self.store(st[1], st[4])
         elif k == "setindex":                       # а[и] = знач
             self.expr(st[3])
             self.index_addr(("index", st[1], st[2], st[4]))
             self.emit("st32")
         elif k == "augindex":                       # а[и] += знач
+            self.need_int(st[4], "составное присваивание элементу")
             self.index_addr(("index", st[1], st[2], st[5]))
             self.emit("dup")
             self.emit("ld32")
@@ -291,16 +393,13 @@ class Gen:
                 if i:
                     self.emit("push", 32)
                     self.emit("sys", 1)
-                if a[0] == "str":
-                    label = f"s_{len(self.strings)}"
-                    self.strings.append((label, a[1].encode("utf-8")))
-                    self.emit("push", label)
-                    self.emit("call", "__pstr")
-                    self.used_pstr = True
+                self.expr(a)
+                if self.ty(a) == "str":
+                    self.emit("call", "__pstrs")
+                    self.need("pstrs")
                 else:
-                    self.expr(a)
                     self.emit("call", "__pnum")
-                    self.used_pnum = True
+                    self.need("pnum")
             self.emit("push", 10)
             self.emit("sys", 1)
         elif k == "return":
@@ -326,6 +425,7 @@ class Gen:
             end = self.new("L_if_end")
             for cond, body in st[1]:
                 nxt = self.new("L_if_next")
+                self.need_int(cond, "условие")
                 self.expr(cond)
                 self.emit("jz", nxt)
                 self.body(body)
@@ -337,6 +437,7 @@ class Gen:
         elif k == "while":
             top, end = self.new("L_while"), self.new("L_wend")
             self.label(top)
+            self.need_int(st[1], "условие")
             self.expr(st[1])
             self.emit("jz", end)
             self.loops.append((top, end))
@@ -365,6 +466,8 @@ class Gen:
                     raise SlogError(line, "шаг в «диапазон» не может быть нулём")
             start = args[0] if len(args) >= 2 else ("num", 0, line)
             stop = args[1] if len(args) >= 2 else args[0]
+            for a in args:
+                self.need_int(a, "«диапазон»")
             cnt, lim = f"@сч{fid}", f"@кон{fid}"
             self.expr(start)
             self.store(cnt, line)
@@ -420,85 +523,36 @@ class Gen:
             self.label(end)
 
     def function(self, st):
-        _, name, params, body, line = st
-        label, _, _ = self.funcs[name]
-        decl = {}
-        self.declared_globals(body, decl)
-        for p in params:
-            if p in decl:
-                raise SlogError(line, f"параметр «{p}» нельзя объявить глобальной переменной")
-        locs = {p: i for i, p in enumerate(params)}
-        found = {}
-        self.assigned(body, found)
-        for name2, ln in sorted(found.items(), key=lambda kv: kv[1]):
-            if name2 in decl or name2 in params:
-                continue
-            self.check_name(name2, ln, "имя переменной")
-            if name2 in self.funcs:
-                raise SlogError(ln, f"имя «{name2}» занято функцией")
-            locs[name2] = len(locs)
-        if len(locs) > 255:
-            raise SlogError(line, "слишком много локальных переменных (максимум 255)")
+        name = st[1]
+        info = self.func_info[name]
+        locs = info["locals"]
         self.fn = {"locals": locs}
+        self.scope = name
         self.code.append(f"; функция {name}")
-        self.label(label)
+        self.label(info["label"])
         self.emit("frame", len(locs))
-        for i in reversed(range(len(params))):
+        for i in reversed(range(len(info["params"]))):
             self.emit("stl", i)
-        self.body(body)
+        self.body(info["body"])
         self.emit("push", 0)
         self.emit("leave")
         self.emit("ret")
         self.fn = None
-
-    def runtime(self):
-        if self.used_pstr:
-            self.code += [
-                "; вывод строки ( адрес -- )", "__pstr:", "__pstr_loop:",
-                "        dup", "        ld8", "        dup", "        jz __pstr_end", "        sys 1",
-                "        push 1", "        add", "        jmp __pstr_loop", "__pstr_end:",
-                "        drop", "        drop", "        ret"]
-        if self.used_pnum:
-            self.code += [
-                "; вывод числа со знаком ( n -- )", "__pnum:",
-                "        dup", "        push 0", "        lt", "        jz __pnum_pos",
-                "        push 45", "        sys 1", "        neg", "__pnum_pos:",
-                "        call __pdig", "        ret",
-                "__pdig:", "        dup", "        push 10", "        lt", "        jnz __pdig_small",
-                "        dup", "        push 10", "        div", "        call __pdig",
-                "        push 10", "        mod", "__pdig_small:",
-                "        push 48", "        add", "        sys 1", "        ret"]
-        if self.used_new:
-            self.code += [
-                "; создать список из n слов ( n -- адрес ); в первом слове хранится длина",
-                "__new:",
-                "        dup", "        push 0", "        lt", "        jnz __new_bad",
-                "        dup", "        push 16777216", "        gt", "        jnz __new_bad",
-                "        dup", "        push 1", "        add", "        push 4", "        mul",
-                "        alloc", "        swap", "        over", "        st32", "        ret",
-                "__new_bad:", f"        trap {TRAP_SIZE}"]
-        if self.used_idx:
-            self.code += [
-                "; адрес элемента списка с проверкой границ ( список индекс -- адрес )",
-                "__idx:",
-                "        over", "        ld32", "        over", "        gt", "        jz __idx_bad",
-                "        dup", "        push 0", "        lt", "        jnz __idx_bad",
-                "        push 4", "        mul", "        add", "        push 4", "        add", "        ret",
-                "__idx_bad:", f"        trap {TRAP_INDEX}"]
+        self.scope = None
 
     def generate(self):
         self.prepare()
-        main = [st for st in self.prog if st[0] != "func"]
         self.code.append("; --- основная программа")
-        self.body(main)
+        self.body(self.main_body)
         self.emit("halt")
         for st in self.prog:
             if st[0] == "func":
                 self.function(st)
-        self.runtime()
+        self.code += runtime(self.used)
         data = [".data"]
         for name, label in self.globals.items():
             data.append(f"{label}: .word 0        ; {name}")
-        for label, raw in self.strings:
-            data.append(f"{label}: .byte " + ", ".join(str(b) for b in raw + b"\x00"))
+        for text, label in self.str_labels.items():
+            words = [len(text)] + [ord(ch) for ch in text]
+            data.append(f"{label}: .word " + ", ".join(str(w) for w in words))
         return "\n".join(["; сгенерировано slog.py, руками не править"] + data + [".code"] + self.code) + "\n"
