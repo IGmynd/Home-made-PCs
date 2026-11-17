@@ -31,7 +31,7 @@ jobs:
           python3 tools/mkfs.py out/fs.img out/hello.ptb out/fib.ptb examples/readme.txt
           python3 tools/mkmedia.py out/floppyB_sim.img --kernel out/fs.img --label PT-USER --cls 2 --blocks 16
           CF="-march=rv32imc_zicsr -mabi=ilp32 -O2 -ffreestanding -nostdlib -nostartfiles -fno-tree-loop-distribute-patterns"
-          riscv64-unknown-elf-gcc $CF -DTICK=2000u -DMEDIA_BASE=0x80010000u -T sim/link.ld kernel/entry.S kernel/kernel.c kernel/ptfs.c vm/vm.c -o out/ksim.elf
+          riscv64-unknown-elf-gcc $CF -DTICK=2000u -DMEDIA_BASE=0x80010000u -T sim/link.ld kernel/entry.S kernel/kernel.c kernel/ptfs.c vm/vm.c vm/vmio.c -o out/ksim.elf
           riscv64-unknown-elf-objcopy -O binary out/ksim.elf out/ksim.bin
           python3 -c "k=open('out/ksim.bin','rb').read(); m=open('out/floppyB_sim.img','rb').read(); assert len(k)<0x6000; open('out/ksim_full.bin','wb').write(k.ljust(0x10000,bytes(1))+m)"
           python3 tools/bin2hex.py out/ksim_full.bin out/ksim.hex
