@@ -127,7 +127,8 @@ static int fs_mount(void) {
 static vm_t vm;
 static uint8_t vm_mem[2048];
 
-/* Системные вызовы байткода: 1 = putc, 2 = getc (без ожидания, -1 если нет символа) */
+/* Системные вызовы байткода: 1 = вывод байта, 2 = ввод байта без ожидания (-1 если нет),
+   3 = ввод строки с консоли (ждёт Enter, кладёт на стек строку Слога) */
 static int kernel_sys(vm_t *v, uint8_t n, void *user) {
     (void)user;
     int32_t x;
@@ -139,6 +140,11 @@ static int kernel_sys(vm_t *v, uint8_t n, void *user) {
         return 0;
     case 2:
         return vm_push(v, (UART_LSR & 1) ? (int32_t)UART_RBR : -1);
+    case VM_SYS_READLINE: {
+        char line[256];
+        int len = readline(line, sizeof line);
+        return vm_push_utf8(v, (const uint8_t *)line, (uint32_t)len);
+    }
     default:
         return VM_ERR_SYS;
     }
