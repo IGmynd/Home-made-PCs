@@ -183,7 +183,7 @@ int vm_run(vm_t *vm, uint32_t max_steps) {
             vm->trap_code = vm->code[vm->pc++];
             return VM_ERR_TRAP;
 
-         case OP_ALLOC: {                     /* ( байты -- адрес ) выделяет и обнуляет память кучи */
+        case OP_ALLOC: {                     /* ( байты -- адрес ) выделяет и обнуляет память кучи */
             POP(a);
             if (a < 0) return VM_ERR_MEM;
             int r = vm_alloc(vm, (uint32_t)a, &t);
