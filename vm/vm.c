@@ -50,6 +50,15 @@ int vm_load(vm_t *vm, const uint8_t *img, uint32_t len, uint8_t *mem, uint32_t m
     vm->trap_code = 0;
     return 0;
 }
+int vm_alloc(vm_t *vm, uint32_t bytes, uint32_t *addr) {
+    uint64_t need = ((uint64_t)bytes + 3u) & ~(uint64_t)3u;
+    if ((uint64_t)vm->heap_end + need > vm->fp) return VM_ERR_MEM;
+    uint32_t a = vm->heap_end;
+    for (uint32_t i = 0; i < (uint32_t)need; i++) vm->mem[a + i] = 0;
+    vm->heap_end += (uint32_t)need;
+    *addr = a;
+    return 0;
+}
 
 static int mem_ok(const vm_t *vm, uint32_t addr, uint32_t size) {
     return size <= vm->mem_len && addr <= vm->mem_len - size;
@@ -174,15 +183,12 @@ int vm_run(vm_t *vm, uint32_t max_steps) {
             vm->trap_code = vm->code[vm->pc++];
             return VM_ERR_TRAP;
 
-        case OP_ALLOC: {                     /* ( байты -- адрес ) выделяет и обнуляет память кучи */
+         case OP_ALLOC: {                     /* ( байты -- адрес ) выделяет и обнуляет память кучи */
             POP(a);
             if (a < 0) return VM_ERR_MEM;
-            uint64_t need = ((uint64_t)(uint32_t)a + 3u) & ~(uint64_t)3u;
-            if ((uint64_t)vm->heap_end + need > vm->fp) return VM_ERR_MEM;
-            uint32_t addr = vm->heap_end;
-            for (uint32_t i = 0; i < (uint32_t)need; i++) vm->mem[addr + i] = 0;
-            vm->heap_end += (uint32_t)need;
-            PUSH((int32_t)addr);
+            int r = vm_alloc(vm, (uint32_t)a, &t);
+            if (r != 0) return r;
+            PUSH((int32_t)t);
             break;
         }
 
