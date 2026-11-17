@@ -1,5 +1,6 @@
 #include <stdint.h>
 #include "../vm/vm.h"
+#include "../vm/vmio.h"
 #include "ptfs.h"
 
 #define UART_BASE 0x10000000u
