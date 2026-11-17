@@ -11,10 +11,15 @@ jobs:
           gcc -Wall -Wextra -O2 -fsanitize=address,undefined -o out/test_vm vm/test_vm.c vm/vm.c
           ./out/test_vm | tee out/vm_tests.txt
           grep -q "VM TESTS PASS" out/vm_tests.txt
+      - name: Console input helper tests
+        run: |
+          gcc -Wall -Wextra -O2 -fsanitize=address,undefined -o out/test_vmio vm/test_vmio.c vm/vmio.c vm/vm.c
+          ./out/test_vmio | tee out/vmio_tests.txt
+          grep -q "VMIO TESTS PASS" out/vmio_tests.txt
       - name: Assemble and run example
         run: |
           python3 tools/ptasm.py examples/hello.pta out/hello.ptb
-          gcc -Wall -Wextra -O2 -o out/host vm/host.c vm/vm.c
+          gcc -Wall -Wextra -O2 -o out/host vm/host.c vm/vmio.c vm/vm.c
           ./out/host out/hello.ptb | tee out/hello.txt
           grep -qx "Hello from PT bytecode" out/hello.txt
           grep -qx "3628800" out/hello.txt
@@ -32,6 +37,11 @@ jobs:
           grep -qx "простых до 100 это 25" out/sito.txt
           grep -qx "компьютер наоборот: ретюьпмок" out/stroki.txt
           grep -qx "всего слов: 4 букв в первом: 5" out/stroki.txt
+          python3 tools/slog.py examples/echo.sl out/echo.pta
+          python3 tools/ptasm.py out/echo.pta out/echo.ptb
+          printf 'Игмунд\n' | ./out/host out/echo.ptb | tee out/echo.txt
+          grep -qx "Привет, Игмунд!" out/echo.txt
+          grep -qx "букв в имени: 6" out/echo.txt
       - name: Slog compiler tests
         run: |
           python3 tools/test_slog.py out/host | tee out/slog_tests.txt
@@ -44,6 +54,10 @@ jobs:
         run: |
           python3 tools/test_slog3.py out/host | tee out/slog3_tests.txt
           grep -q "SLOG3 TESTS PASS" out/slog3_tests.txt
+      - name: Slog compiler tests, part 4 (console input)
+        run: |
+          python3 tools/test_slog4.py out/host | tee out/slog4_tests.txt
+          grep -q "SLOG4 TESTS PASS" out/slog4_tests.txt
       - name: Filesystem test
         run: |
           python3 tools/ptasm.py examples/fib.pta out/fib.ptb
@@ -57,4 +71,5 @@ jobs:
           sudo apt-get update && sudo apt-get install -y gcc-riscv64-unknown-elf
           CF="-march=rv32imc_zicsr -mabi=ilp32 -O2 -Wall -Wextra -ffreestanding -nostdlib"
           riscv64-unknown-elf-gcc $CF -c vm/vm.c -o out/vm_rv32.o
+          riscv64-unknown-elf-gcc $CF -c vm/vmio.c -o out/vmio_rv32.o
           riscv64-unknown-elf-gcc $CF -c kernel/ptfs.c -o out/ptfs_rv32.o
