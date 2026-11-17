@@ -49,14 +49,21 @@ static char getc_(void) {
     return UART_RBR;
 }
 
-/* Читает строку с эхом и поддержкой Backspace */
-static void readline(char *buf, int max) {
+/* Читает строку с эхом. Принимает ASCII и UTF-8 (русский ввод), Backspace стирает целую букву.
+   Возвращает число байт; строка завершается нулём. */
+static int readline(char *buf, int max) {
     int n = 0;
     for (;;) {
-        char c = getc_();
-        if (c == '\r' || c == '\n') { puts_("\r\n"); buf[n] = 0; return; }
-        if ((c == 0x7f || c == 8) && n > 0) { n--; puts_("\b \b"); }
-        else if (c >= 32 && c < 127 && n < max - 1) { buf[n++] = c; putc_(c); }
+        uint8_t c = (uint8_t)getc_();
+        if (c == '\r' || c == '\n') { puts_("\r\n"); buf[n] = 0; return n; }
+        if ((c == 0x7f || c == 8) && n > 0) {
+            n--;
+            while (n > 0 && ((uint8_t)buf[n] & 0xC0) == 0x80) n--;      /* добавочные байты буквы */
+            puts_("\b \b");
+        } else if (c >= 32 && c != 0x7f && n < max - 1) {
+            buf[n++] = (char)c;
+            putc_((char)c);
+        }
     }
 }
 
