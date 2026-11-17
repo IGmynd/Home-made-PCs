@@ -49,5 +49,7 @@ int vm_run(vm_t *vm, uint32_t max_steps);
 /* Для системных вызовов: положить значение на стек / снять со стека. 0 или код ошибки. */
 int vm_push(vm_t *vm, int32_t v);
 int vm_pop(vm_t *vm, int32_t *v);
+/* Выделить из кучи программы обнулённый блок (размер округляется до 4). 0 или VM_ERR_MEM. */
+int vm_alloc(vm_t *vm, uint32_t bytes, uint32_t *addr);
 
 #endif
