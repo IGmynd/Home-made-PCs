@@ -8,9 +8,9 @@ AUGOPS = {"+=": "+", "-=": "-", "*=": "*", "//=": "//", "%=": "%"}
 
 
 class Parser:
-    def __init__(self, toks):
+    def __init__(self, toks, loop_ids=None):
         self.t, self.p = toks, 0
-        self.fid = 0               # номера циклов «для», чтобы скрытые переменные не пересекались
+        self.loop_ids = loop_ids if loop_ids is not None else [0]   # общий счётчик циклов «для»               # номера циклов «для», чтобы скрытые переменные не пересекались
 
     def peek(self):
         return self.t[self.p]
@@ -60,6 +60,13 @@ class Parser:
 
     def statement(self, top):
         k, v, line = self.peek()
+        if k == "KW" and v == "подключить":
+            if not top:
+                raise SlogError(line, "«подключить» допустимо только на верхнем уровне")
+            self.next()
+            name = self.expect("STR", what="имя модуля в кавычках")[1]
+            self.expect("NEWLINE", what="конец строки")
+            return ("include", name, line)
         if k == "KW" and v == "функция":
             if not top:
                 raise SlogError(line, "функции определяются только на верхнем уровне")
@@ -122,8 +129,8 @@ class Parser:
         else:
             spec = ("iter", self.expr())
         self.expect("OP", ":")
-        self.fid += 1
-        fid = self.fid
+        self.loop_ids[0] += 1
+        fid = self.loop_ids[0]
         return ("for", var, spec, self.block(), line, fid)
 
     def simple(self):
