@@ -42,6 +42,11 @@ jobs:
           printf 'Игмунд\n' | ./out/host out/echo.ptb | tee out/echo.txt
           grep -qx "Привет, Игмунд!" out/echo.txt
           grep -qx "букв в имени: 6" out/echo.txt
+          python3 tools/slog.py examples/chisla.sl out/chisla.pta
+          python3 tools/ptasm.py out/chisla.pta out/chisla.ptb
+          printf '10 5 30 7 -2\n' | ./out/host out/chisla.ptb | tee out/chisla.txt
+          grep -qx "по возрастанию: -2 5 7 10 30" out/chisla.txt
+          grep -qx "сумма: 50 наибольшее: 30 наименьшее: -2" out/chisla.txt
       - name: Slog compiler tests
         run: |
           python3 tools/test_slog.py out/host | tee out/slog_tests.txt
@@ -54,6 +59,10 @@ jobs:
         run: |
           python3 tools/test_slog3.py out/host | tee out/slog3_tests.txt
           grep -q "SLOG3 TESTS PASS" out/slog3_tests.txt
+      - name: Slog compiler tests, part 5 (modules and libraries)
+        run: |
+          python3 tools/test_slog5.py out/host | tee out/slog5_tests.txt
+          grep -q "SLOG5 TESTS PASS" out/slog5_tests.txt
       - name: Slog compiler tests, part 4 (console input)
         run: |
           python3 tools/test_slog4.py out/host | tee out/slog4_tests.txt
