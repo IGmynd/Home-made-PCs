@@ -1,7 +1,23 @@
 """Слог: лексер. Превращает текст программы в список слов с учётом отступов."""
 
 KEYWORDS = {"если", "иначе_если", "иначе", "пока", "для", "функция", "вернуть", "прервать",
-            "продолжить", "пропуск", "глобальная", "и", "или", "не", "истина", "ложь"}
+            "продолжить", "пропуск", "глобальная", "и", "или", "не", "истина", "ложь",
+            "подключить"}
+
+# Номер строки хранится вместе с номером файла: (файл << 20) | строка. Файл 0 это главная программа.
+FILE_SHIFT = 20
+FILES = [""]                    # имена файлов по номерам, FILES[0] не используется
+
+
+def register_file(name):
+    FILES.append(name)
+    return len(FILES) - 1
+
+
+def where(line):
+    """Человекочитаемое место: «строка 5» или «stroki.sl, строка 5»."""
+    fid, n = line >> FILE_SHIFT, line & ((1 << FILE_SHIFT) - 1)
+    return f"строка {n}" if fid == 0 else f"{FILES[fid]}, строка {n}"
 
 # цифры шестнадцатеричных чисел: 0-9 и русские А Б В Г Д Е (10-15), регистр любой
 HEX_DIGITS = {**{str(d): d for d in range(10)},
@@ -11,8 +27,7 @@ HEX_DIGITS = {**{str(d): d for d in range(10)},
 
 class SlogError(Exception):
     def __init__(self, line, msg):
-        super().__init__(f"строка {line}: {msg}")
-
+          super().__init__(f"{where(line)}: {msg}")
 
 def is_cyr(ch):
     return "\u0400" <= ch <= "\u04ff" and ch.isalpha()
@@ -116,10 +131,11 @@ def lex_line(s, lineno, toks, depth):
     return depth
 
 
-def tokenize(src):
+def tokenize(src, fid=0):
     toks, indents, depth = [], [0], 0
-    lineno = 0
-    for lineno, raw in enumerate(src.split("\n"), 1):
+    lineno = fid << FILE_SHIFT
+    for n, raw in enumerate(src.split("\n"), 1):
+        lineno = (fid << FILE_SHIFT) | n
         line = raw.rstrip("\r")
         stripped = line.lstrip(" ")
         if depth == 0:
