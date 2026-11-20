@@ -81,7 +81,8 @@ class Gen:
                         self.emit("eq")
                     return
                 raise SlogError(line, "нельзя сравнивать строку с числом")
-                        if op in ("<", "<=", ">", ">="):
+             
+            if op in ("<", "<=", ">", ">="):
                 if tl == tr:
                     self.emit("call", "__scmp")
                     self.need("scmp")
