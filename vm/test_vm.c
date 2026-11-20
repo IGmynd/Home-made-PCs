@@ -125,6 +125,24 @@ static void t_heap(void) {
     /* после кадра куча не может залезть на него */
     { CODE(0x60, 40, P8(100), 0x52, 0x00); check("frame blocks heap", RUN(0), VM_ERR_MEM); }
 }
+
+static void t_marks(void) {
+    vm_t vm;
+    /* alloc 8; drop; mark; alloc 16; drop; reset; alloc 4 -> тот же адрес, что и у выделения после метки */
+    { CODE(P8(8), 0x52, 0x04, 0x53, 0x03, P8(16), 0x52, 0x04, 0x54, P8(4), 0x52, 0x00);
+      check("mark run", RUN(0), VM_HALT);
+      check("mark value", vm.ds[0], 8);                       /* метка после первого выделения */
+      check("reuse after reset", vm.ds[1], 8); }               /* новое выделение на месте сброшенных */
+    { CODE(0x53, 0x00); RUN(0); check("mark empty heap", vm.ds[0], 0); }
+    { CODE(P8(8), 0x52, 0x04, P8(100), 0x54); check("reset beyond", RUN(0), VM_ERR_MEM); }
+    { CODE(P8(8), 0x52, 0x04, P8(-4), 0x54); check("reset negative", RUN(0), VM_ERR_MEM); }
+    { CODE(P8(8), 0x52, 0x04, P8(2), 0x54); check("reset unaligned", RUN(0), VM_ERR_MEM); }
+    { CODE(P8(0), 0x54, 0x00); check("reset to base ok", RUN(0), VM_HALT); }
+    { CODE(0x54); check("reset underflow", RUN(0), VM_ERR_DS_UNDER); }
+    /* сброс не разрешает вылезти за пределы: после сброса выделение снова проверяется */
+    { CODE(0x53, P8(100), 0x52, 0x04, 0x54, P32(100000), 0x52, 0x00); check("alloc after reset still checked", RUN(0), VM_ERR_MEM); }
+}
+
 static void t_load(void) {
     vm_t vm;
     static uint8_t mem[16];
@@ -144,6 +162,7 @@ int main(void) {
     t_mem();
     t_frames();
     t_heap();
+    t_marks();
     t_load();
     if (fails == 0) puts("VM TESTS PASS");
     else printf("VM TESTS FAIL: %d\n", fails);
