@@ -9,7 +9,7 @@ enum {
     OP_EQ = 0x20, OP_NE = 0x21, OP_LT = 0x22, OP_LE = 0x23, OP_GT = 0x24, OP_GE = 0x25,
     OP_LD32 = 0x30, OP_ST32 = 0x31, OP_LD8 = 0x32, OP_ST8 = 0x33,
     OP_JMP = 0x40, OP_JZ = 0x41, OP_JNZ = 0x42, OP_CALL = 0x43, OP_RET = 0x44,
-    OP_SYS = 0x50, OP_TRAP = 0x51, OP_ALLOC = 0x52,
+    OP_SYS = 0x50, OP_TRAP = 0x51, OP_ALLOC = 0x52, OP_HEAPMARK = 0x53, OP_HEAPRESET = 0x54,
     OP_FRAME = 0x60, OP_LEAVE = 0x61, OP_LDL = 0x62, OP_STL = 0x63
 };
 
@@ -46,7 +46,8 @@ int vm_load(vm_t *vm, const uint8_t *img, uint32_t len, uint8_t *mem, uint32_t m
     vm->pc = 0; vm->sp = 0; vm->rp = 0;
     vm->fp_top = mem_len & ~3u;
     vm->fp = vm->fp_top;
-    vm->heap_end = (data_len + 3u) & ~3u;
+    vm->heap_base = (data_len + 3u) & ~3u;
+    vm->heap_end = vm->heap_base;
     vm->trap_code = 0;
     return 0;
 }
@@ -191,6 +192,16 @@ int vm_run(vm_t *vm, uint32_t max_steps) {
             PUSH((int32_t)t);
             break;
         }
+
+        case OP_HEAPMARK:                    /* ( -- метка ) запомнить, сколько кучи занято */
+            PUSH((int32_t)vm->heap_end);
+            break;
+        case OP_HEAPRESET:                   /* ( метка -- ) вернуть кучу к метке: всё выделенное позже пропадает */
+            POP(a);
+            t = U(a);
+            if (t < vm->heap_base || t > vm->heap_end || (t & 3u)) return VM_ERR_MEM;
+            vm->heap_end = t;
+            break;
 
         case OP_FRAME: {                     /* n слотов; заголовок кадра: [прежний fp][n] */
             if (vm->pc + 1 > vm->code_len) return VM_ERR_BADOP;
