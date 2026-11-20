@@ -9,7 +9,7 @@ BUILTINS = {"символ": 1, "ввод_символ": 0, "читать": 1, "�
             "читать_байт": 1, "писать_байт": 2, "выделить": 1,
             "список": 1, "длина": 1,
             "строка": 1, "число": 1, "срез": 3, "из_кода": 1, "строкой": 1,
-            "ввод_строка": 0}
+            "ввод_строка": 0, "память_метка": 0, "память_сбросить": 1}}
 # зарезервированы слова языка, «печать» и «диапазон»; имена встроенных функций занять можно:
 # переменная «число» и вызов «число(...)» различаются скобками, а своя функция заменяет встроенную
 RESERVED = KEYWORDS | {PRINT, RANGE}
@@ -81,7 +81,15 @@ class Gen:
                         self.emit("eq")
                     return
                 raise SlogError(line, "нельзя сравнивать строку с числом")
-            raise SlogError(line, f"операция «{op}» к строкам не применима (строки можно складывать и сравнивать на == и !=)")
+                        if op in ("<", "<=", ">", ">="):
+                if tl == tr:
+                    self.emit("call", "__scmp")
+                    self.need("scmp")
+                    self.emit("push", 0)
+                    self.emit(BINOPS[op])
+                    return
+                raise SlogError(line, "нельзя сравнивать строку с числом")
+            raise SlogError(line, f"операция «{op}» к строкам не применима (строки можно складывать и сравнивать)")
         self.emit(BINOPS[op])
 
     def new(self, prefix):
@@ -111,6 +119,10 @@ class Gen:
                 out.setdefault(st[1], st[3])
             elif st[0] == "aug":
                 out.setdefault(st[1], st[4])
+            elif st[0] == "multi":
+                for t in st[1]:
+                    if t[0] == "var":
+                        out.setdefault(t[1], st[3])
             elif st[0] == "for":
                 _, var, spec, _, line, fid = st
                 out.setdefault(var, line)
@@ -317,6 +329,11 @@ class Gen:
                 self.emit("sys", 2)
             elif name == "ввод_строка":
                 self.emit("sys", 3)
+            elif name == "память_метка":
+                self.emit("heapmark")
+            elif name == "память_сбросить":
+                self.emit("heapreset")
+                self.emit("push", 0)
             elif name == "читать":
                 self.emit("ld32")
             elif name == "читать_байт":
@@ -375,6 +392,15 @@ class Gen:
             self.binop(st[2], self.ty(("var", st[1], st[4])), self.ty(st[3]), st[4])
             self.store(st[1], st[4])
         elif k == "setindex":                       # а[и] = знач
+        elif k == "multi":                          # а, б = x, y: сначала все значения, потом присваивание
+            for e in st[2]:
+                self.expr(e)
+            for t in reversed(st[1]):
+                if t[0] == "var":
+                    self.store(t[1], t[2])
+                else:
+                    self.index_addr(t)
+                    self.emit("st32")
             self.expr(st[3])
             self.index_addr(("index", st[1], st[2], st[4]))
             self.emit("st32")
