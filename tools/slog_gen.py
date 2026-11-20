@@ -393,15 +393,6 @@ class Gen:
             self.binop(st[2], self.ty(("var", st[1], st[4])), self.ty(st[3]), st[4])
             self.store(st[1], st[4])
         elif k == "setindex":                       # а[и] = знач
-        elif k == "multi":                          # а, б = x, y: сначала все значения, потом присваивание
-            for e in st[2]:
-                self.expr(e)
-            for t in reversed(st[1]):
-                if t[0] == "var":
-                    self.store(t[1], t[2])
-                else:
-                    self.index_addr(t)
-                    self.emit("st32")
             self.expr(st[3])
             self.index_addr(("index", st[1], st[2], st[4]))
             self.emit("st32")
@@ -414,6 +405,15 @@ class Gen:
             self.emit(BINOPS[st[3]])
             self.emit("swap")
             self.emit("st32")
+        elif k == "multi":                          # а, б = x, y: сначала все значения, потом присваивание
+            for e in st[2]:
+                self.expr(e)
+            for t in reversed(st[1]):
+                if t[0] == "var":
+                    self.store(t[1], t[2])
+                else:
+                    self.index_addr(t)
+                    self.emit("st32")
         elif k == "expr":
             self.expr(st[1])
             self.emit("drop")
