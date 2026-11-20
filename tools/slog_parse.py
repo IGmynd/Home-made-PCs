@@ -162,7 +162,21 @@ class Parser:
                             break
                 self.expect("OP", ")")
                 return ("print", args, line)
-        e = self.expr()
+                e = self.expr()
+        if self.at("OP", ","):                       # несколько значений сразу: а, б = б, а
+            targets = [e]
+            while self.accept("OP", ","):
+                targets.append(self.expr())
+            for t in targets:
+                if t[0] not in ("var", "index"):
+                    raise SlogError(line, "слева допустимы только имена и элементы списка")
+            self.expect("OP", "=", what="«=» после списка имён")
+            values = [self.expr()]
+            while self.accept("OP", ","):
+                values.append(self.expr())
+            if len(values) != len(targets):
+                raise SlogError(line, f"слева {len(targets)} имён, а справа значений: {len(values)}")
+            return ("multi", targets, values, line)
         if self.at("OP", "="):
             self.next()
             rhs = self.expr()
