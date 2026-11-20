@@ -34,7 +34,7 @@ typedef struct vm {
     uint32_t pc;
     int32_t  ds[PTVM_DS_SIZE];  uint32_t sp;   /* sp = число значений на стеке */
     uint32_t rs[PTVM_RS_SIZE];  uint32_t rp;
-    uint32_t fp, fp_top, heap_end;             /* кадры растут вниз от fp_top, куча вверх от данных до heap_end */
+    uint32_t fp, fp_top, heap_base, heap_end;  /* кадры растут вниз от fp_top, куча вверх от heap_base до heap_end */ heap_end;             /* кадры растут вниз от fp_top, куча вверх от данных до heap_end */
     uint32_t trap_code;
     vm_sys_fn sys;  void *user;
 } vm_t;
