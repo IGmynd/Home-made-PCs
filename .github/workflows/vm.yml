@@ -63,6 +63,10 @@ jobs:
         run: |
           python3 tools/test_slog5.py out/host | tee out/slog5_tests.txt
           grep -q "SLOG5 TESTS PASS" out/slog5_tests.txt
+      - name: Slog compiler tests, part 6 (memory marks, assignment, strings order, math)
+        run: |
+          python3 tools/test_slog6.py out/host | tee out/slog6_tests.txt
+          grep -q "SLOG6 TESTS PASS" out/slog6_tests.txt
       - name: Slog compiler tests, part 4 (console input)
         run: |
           python3 tools/test_slog4.py out/host | tee out/slog4_tests.txt
