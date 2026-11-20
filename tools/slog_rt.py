@@ -624,3 +624,95 @@ __sl_end:
         leave
         ret
 """)
+define("scmp", [], """
+; сравнение строк по кодам символов ( a b -- -1, 0 или 1 )
+__scmp:
+        frame 6
+        stl 1
+        stl 0
+        ldl 0
+        ld32
+        ldl 1
+        ld32
+        lt
+        jz __scmp_b
+        ldl 0
+        ld32
+        stl 3
+        jmp __scmp_go
+__scmp_b:
+        ldl 1
+        ld32
+        stl 3
+__scmp_go:
+        push 0
+        stl 2
+__scmp_loop:
+        ldl 2
+        ldl 3
+        lt
+        jz __scmp_len
+        ldl 0
+        ldl 2
+        push 4
+        mul
+        add
+        push 4
+        add
+        ld32
+        stl 4
+        ldl 1
+        ldl 2
+        push 4
+        mul
+        add
+        push 4
+        add
+        ld32
+        stl 5
+        ldl 4
+        ldl 5
+        lt
+        jz __scmp_ge
+        push -1
+        leave
+        ret
+__scmp_ge:
+        ldl 4
+        ldl 5
+        gt
+        jz __scmp_next
+        push 1
+        leave
+        ret
+__scmp_next:
+        ldl 2
+        push 1
+        add
+        stl 2
+        jmp __scmp_loop
+__scmp_len:
+        ldl 0
+        ld32
+        ldl 1
+        ld32
+        lt
+        jz __scmp_len2
+        push -1
+        leave
+        ret
+__scmp_len2:
+        ldl 0
+        ld32
+        ldl 1
+        ld32
+        gt
+        jz __scmp_eq
+        push 1
+        leave
+        ret
+__scmp_eq:
+        push 0
+        leave
+        ret
+""")
