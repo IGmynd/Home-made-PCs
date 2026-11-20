@@ -57,6 +57,12 @@ def stmt_exprs(st):
         return [st[1], st[2], st[3]]
     if k == "augindex":
         return [st[1], st[2], st[4]]
+    if k == "multi":
+        extra = []
+        for t in st[1]:
+            if t[0] == "index":
+                extra += [t[1], t[2]]
+        return extra + list(st[2])
     if k == "expr":
         return [st[1]]
     if k == "print":
@@ -127,6 +133,10 @@ class Types:
             elif k == "aug":
                 t = self.of(("bin", st[2], ("var", st[1], st[4]), st[3], st[4]), scope)
                 self.join(self.var, self.key(scope, st[1]), t, st[4], f"переменная «{st[1]}»")
+            elif k == "multi":
+                for t, ex in zip(st[1], st[2]):
+                    if t[0] == "var":
+                        self.join(self.var, self.key(scope, t[1]), self.of(ex, scope), st[3], f"переменная «{t[1]}»")
             elif k == "for":
                 self.join(self.var, self.key(scope, st[1]), "int", st[4], f"переменная цикла «{st[1]}»")
             elif k == "return" and scope is not None and st[1] is not None:
