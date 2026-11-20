@@ -162,7 +162,7 @@ class Parser:
                             break
                 self.expect("OP", ")")
                 return ("print", args, line)
-                 e = self.expr()
+        e = self.expr()
         if self.at("OP", ","):                       # несколько значений сразу: а, б = б, а
             targets = [e]
             while self.accept("OP", ","):
