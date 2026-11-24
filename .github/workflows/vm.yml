@@ -25,7 +25,7 @@ jobs:
           grep -qx "3628800" out/hello.txt
       - name: Slog examples
         run: |
-          for f in privet fakt prostye sort sito stroki; do
+          for f in privet fakt prostye sort sito stroki vremya kubik; do
             python3 tools/slog.py examples/$f.sl out/$f.pta
             python3 tools/ptasm.py out/$f.pta out/$f.ptb
             ./out/host out/$f.ptb | tee out/$f.txt
@@ -37,6 +37,8 @@ jobs:
           grep -qx "простых до 100 это 25" out/sito.txt
           grep -qx "компьютер наоборот: ретюьпмок" out/stroki.txt
           grep -qx "всего слов: 4 букв в первом: 5" out/stroki.txt
+          grep -qx "пауза работает" out/vremya.txt
+          awk '/выпало/ {s += $3} END {exit (s == 600) ? 0 : 1}' out/kubik.txt
           python3 tools/slog.py examples/echo.sl out/echo.pta
           python3 tools/ptasm.py out/echo.pta out/echo.ptb
           printf 'Игмунд\n' | ./out/host out/echo.ptb | tee out/echo.txt
@@ -67,6 +69,15 @@ jobs:
         run: |
           python3 tools/test_slog6.py out/host | tee out/slog6_tests.txt
           grep -q "SLOG6 TESTS PASS" out/slog6_tests.txt
+      - name: Slog compiler tests, part 7 (time, sleep, random numbers)
+        run: |
+          python3 tools/test_slog7.py out/host | tee out/slog7_tests.txt
+          grep -q "SLOG7 TESTS PASS" out/slog7_tests.txt
+      - name: Kernel time arithmetic test
+        run: |
+          gcc -Wall -Wextra -O2 -fsanitize=address,undefined -o out/test_timeutil kernel/test_timeutil.c
+          ./out/test_timeutil | tee out/timeutil_tests.txt
+          grep -q "TIMEUTIL TESTS PASS" out/timeutil_tests.txt
       - name: Slog compiler tests, part 4 (console input)
         run: |
           python3 tools/test_slog4.py out/host | tee out/slog4_tests.txt
