@@ -104,6 +104,7 @@ void trap_handler(void) {
             ticks++;
             last_tick_lo = (uint32_t)now;
             set_timer(now + TICK);
+        }
     } else if (cause == 11) {
         puts_("ecall caught\n");
         csr_write(mepc, csr_read(mepc) + 4);
