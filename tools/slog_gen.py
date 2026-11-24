@@ -331,6 +331,11 @@ class Gen:
                 self.emit("sys", 2)
             elif name == "ввод_строка":
                 self.emit("sys", 3)
+            elif name == "время":
+                self.emit("sys", 4)
+            elif name == "пауза":
+                self.emit("sys", 5)
+                self.emit("push", 0)
             elif name == "память_метка":
                 self.emit("heapmark")
             elif name == "память_сбросить":
