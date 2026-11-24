@@ -2,6 +2,7 @@
 #include "../vm/vm.h"
 #include "../vm/vmio.h"
 #include "ptfs.h"
+#include "timeutil.h"
 
 #define UART_BASE 0x10000000u
 #define UART_THR (*(volatile uint8_t *)(UART_BASE + 0)) /* запись: передать байт */
@@ -23,6 +24,10 @@
 
 extern void trap_entry(void);
 static volatile uint32_t ticks;
+static volatile uint32_t last_tick_lo;     /* младшие 32 бита счётчика времени при последнем такте */
+
+#define UNITS_PER_MS 10000u                /* счётчик времени идёт с частотой 10 МГц */
+#define TICK_MS (TICK / UNITS_PER_MS)      /* длина такта в миллисекундах */
 
 /* ---------- вывод и ввод ---------- */
 static void putc_(char c) { while (!(UART_LSR & 0x20)) {} UART_THR = c; }
@@ -79,11 +84,26 @@ static void set_timer(uint64_t t) {
     CMP_LO = (uint32_t)t;
     CMP_HI = (uint32_t)(t >> 32);
 }
+/* Миллисекунды с запуска. Читаем, пока такт не изменился между чтениями: так пара значений согласована. */
+static uint32_t now_ms(void) {
+    uint32_t t1, t2, last, lo;
+    do {
+        t1 = ticks;
+        last = last_tick_lo;
+        lo = (uint32_t)mtime();
+        t2 = ticks;
+    } while (t1 != t2);
+    return time_ms(t1, TICK_MS, UNITS_PER_MS, lo, last);
+}
 
 void trap_handler(void) {
     uint32_t cause = csr_read(mcause);
     if (cause & 0x80000000u) {
-        if ((cause & 0xFFF) == 7) { ticks++; set_timer(mtime() + TICK); }
+        if ((cause & 0xFFF) == 7) {
+            uint64_t now = mtime();
+            ticks++;
+            last_tick_lo = (uint32_t)now;
+            set_timer(now + TICK);
     } else if (cause == 11) {
         puts_("ecall caught\n");
         csr_write(mepc, csr_read(mepc) + 4);
@@ -128,7 +148,8 @@ static vm_t vm;
 static uint8_t vm_mem[2048];
 
 /* Системные вызовы байткода: 1 = вывод байта, 2 = ввод байта без ожидания (-1 если нет),
-   3 = ввод строки с консоли (ждёт Enter, кладёт на стек строку Слога) */
+   3 = ввод строки с консоли (ждёт Enter, кладёт на стек строку Слога),
+   4 = время в миллисекундах с запуска, 5 = пауза на столько миллисекунд */
 static int kernel_sys(vm_t *v, uint8_t n, void *user) {
     (void)user;
     int32_t x;
@@ -145,6 +166,15 @@ static int kernel_sys(vm_t *v, uint8_t n, void *user) {
         int len = readline(line, sizeof line);
         return vm_push_utf8(v, (const uint8_t *)line, (uint32_t)len);
     }
+    case VM_SYS_TIME:
+        return vm_push(v, (int32_t)now_ms());
+    case VM_SYS_SLEEP:
+        if ((r = vm_pop(v, &x)) != 0) return r;
+        if (x > 0) {
+            uint32_t t0 = now_ms();
+            while ((uint32_t)(now_ms() - t0) < (uint32_t)x) {}
+        }
+        return 0;
     default:
         return VM_ERR_SYS;
     }
